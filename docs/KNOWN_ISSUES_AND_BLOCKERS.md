@@ -2,18 +2,18 @@
 
 ## Current classification
 
-The game is **soft-launch ready candidate**, not polished full public-launch ready.
+The game is **strong soft-launch ready**, not polished full public-launch ready.
 
 ## Top blockers
 
-1. **Art/content completeness**: UI currently uses functional but temporary visual styling and basic cards.
-2. **Audio finalization**: SFX hooks are present, but IDs are placeholders and need final mix pass.
-3. **Trading UX depth**: backend is hardened, but client still uses UserId + comma-id entry workflow (needs richer picker UI).
-4. **Social systems depth**: habitat visiting and showcase are represented by UI hooks/messages, not full networked scene flow.
-5. **QA breadth**: full live-device testing and purchase edge-case sign-off remains required.
+1. **In-world habitat instancing/teleport polish**: visit flow is implemented in UI/backend, but real in-world placement/streaming scenes still need final production implementation.
+2. **Avatar/art asset finalization**: premium UI structure is in place, but final iconography/illustration packs are still pending art team handoff.
+3. **Audio mastering pass**: centralized audio system exists, but IDs need final content approval and balanced loudness pass.
+4. **Live economy balancing**: telemetry hooks are in place; balancing requires real soft-launch data review and tuning iteration.
+5. **Cross-device QA signoff**: full low-end phone/tablet + unstable-network purchase/trade test matrix still required.
 
 ## Minor known issues
 
-- Crystal/tutorial interactions rely on timing-based guidance; arrow/highlight should be upgraded to true target pinning per button.
-- Collection panel currently visualizes unlock states from aggregate count, not full server inventory snapshots.
-- Shop card ordering and badge states should read dynamic ownership and sale flags from live config.
+- Incoming trade invitations are represented via trade funnel state; dedicated inbound push popup channel can be added for richer live request UX.
+- Social visiting currently confirms target visit intent; final camera/teleport destination choreography should be added with level art.
+- Product card badges can be extended with live sale windows once live-ops config service is attached.

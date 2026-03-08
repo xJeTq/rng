@@ -10,6 +10,7 @@ local defaultData = {
 	Currencies = { Stardust = 250, Energy = 10 },
 	Creatures = {},
 	EquippedCreatureId = nil,
+	FavoriteCreatureId = nil,
 	PityCount = 0,
 	Daily = { LastClaimDay = 0, Streak = 0 },
 	QuestDay = 0,

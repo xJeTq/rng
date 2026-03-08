@@ -61,6 +61,11 @@ src/
    - `AcceptTrade` (RemoteFunction)
    - `UpgradeHabitat` (RemoteFunction)
    - `ClaimQuest` (RemoteFunction)
+   - `GetSocialSnapshot` (RemoteFunction)
+   - `GetCreatureInventory` (RemoteFunction)
+   - `SetFavoriteCreature` (RemoteFunction)
+   - `VisitHabitat` (RemoteFunction)
+   - `TrackClientEvent` (RemoteFunction)
    - `ServerAnnouncement` (RemoteEvent)
    - `DataReady` (RemoteEvent)
 
@@ -148,3 +153,11 @@ Before publishing to a large audience, complete at least:
 - Added polished player feedback loops: reveal overlays, toasts, rare celebration shake, and purchase feedback hooks.
 - Added shop and trade UX presentation layers on top of hardened backend remotes.
 - Added launch planning docs in `docs/` for checklist, known blockers, and manual QA pass.
+
+## Phase 3 Launch-Polish Added
+
+- Trade UX rebuilt to visual picker flow (player list, creature cards, rarity badges, add/remove offers, timer, confirm safety messaging).
+- Social layer expanded with visit flow, player collection summaries, and favorite showcase integration.
+- Premium presentation pass for cards, rarity color language, and hierarchy improvements in key panels.
+- Audio pass upgraded with centralized SFX + tiered rarity reveal audio mappings in `UIConfig.lua`.
+- Soft-launch telemetry hooks added for tutorial, first-time milestones, trade funnel, purchase funnel, and social interactions.

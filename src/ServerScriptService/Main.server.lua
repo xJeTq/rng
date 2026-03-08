@@ -36,6 +36,12 @@ local CreateTrade = ensureRemote("CreateTrade", "RemoteFunction")
 local AcceptTrade = ensureRemote("AcceptTrade", "RemoteFunction")
 local UpgradeHabitat = ensureRemote("UpgradeHabitat", "RemoteFunction")
 local ClaimQuest = ensureRemote("ClaimQuest", "RemoteFunction")
+local GetSocialSnapshot = ensureRemote("GetSocialSnapshot", "RemoteFunction")
+local GetCreatureInventory = ensureRemote("GetCreatureInventory", "RemoteFunction")
+local SetFavoriteCreature = ensureRemote("SetFavoriteCreature", "RemoteFunction")
+local VisitHabitat = ensureRemote("VisitHabitat", "RemoteFunction")
+local TrackClientEvent = ensureRemote("TrackClientEvent", "RemoteFunction")
+
 local ServerAnnouncement = ensureRemote("ServerAnnouncement", "RemoteEvent")
 local DataReady = ensureRemote("DataReady", "RemoteEvent")
 
@@ -84,6 +90,26 @@ local function getMaxCreatureSlots(player)
 	return base
 end
 
+local function collectionProgress(data)
+	local total = 0
+	for _, _ in pairs(CreatureCatalog.Definitions) do
+		total += 1
+	end
+
+	local unique = {}
+	for _, creature in ipairs(data.Creatures) do
+		unique[creature.CatalogId] = true
+	end
+
+	local unlocked = 0
+	for _, _ in pairs(unique) do
+		unlocked += 1
+	end
+
+	local percent = total > 0 and math.floor((unlocked / total) * 100) or 0
+	return unlocked, total, percent
+end
+
 local function grantCreature(player, data, rarity)
 	local maxSlots = getMaxCreatureSlots(player)
 	if #data.Creatures >= maxSlots then
@@ -112,6 +138,21 @@ local function grantCreature(player, data, rarity)
 	end
 
 	return creatureId, def, nil
+end
+
+local function toInventoryView(data)
+	local view = {}
+	for _, creature in ipairs(data.Creatures) do
+		local def = CreatureCatalog.Definitions[creature.CatalogId]
+		table.insert(view, {
+			Id = creature.Id,
+			CatalogId = creature.CatalogId,
+			Name = def and def.DisplayName or creature.CatalogId,
+			Rarity = creature.Rarity,
+			Production = creature.Production,
+		})
+	end
+	return view
 end
 
 OpenCrystal.OnServerInvoke = function(player, crystalType)
@@ -193,6 +234,7 @@ ClaimDailyReward.OnServerInvoke = function(player)
 	data.Daily.LastClaimDay = day
 	local reward = 100 + (data.Daily.Streak * 25)
 	CurrencyService.Add(player, GameConfig.Currencies.Stardust, reward)
+	AnalyticsService.Track(player, "DailyRewardClaimed", { Streak = data.Daily.Streak, Reward = reward })
 	syncLeaderstats(player)
 
 	return { Ok = true, Reward = reward, Streak = data.Daily.Streak }
@@ -218,8 +260,100 @@ ClaimQuest.OnServerInvoke = function(player, questId)
 	end
 
 	CurrencyService.Add(player, GameConfig.Currencies.Stardust, reward)
+	AnalyticsService.Track(player, "QuestClaimed", { QuestId = questId, Reward = reward })
 	syncLeaderstats(player)
 	return { Ok = true, Reward = reward }
+end
+
+GetCreatureInventory.OnServerInvoke = function(player)
+	local data = DataService.Get(player)
+	if not data then
+		return { Ok = false, Error = "NoData" }
+	end
+
+	local unlocked, total, percent = collectionProgress(data)
+	return {
+		Ok = true,
+		Creatures = toInventoryView(data),
+		FavoriteCreatureId = data.FavoriteCreatureId,
+		Collection = { Unlocked = unlocked, Total = total, Percent = percent },
+	}
+end
+
+GetSocialSnapshot.OnServerInvoke = function(player)
+	local players = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player then
+			local pdata = DataService.Get(p)
+			if pdata then
+				local unlocked, total, percent = collectionProgress(pdata)
+				table.insert(players, {
+					UserId = p.UserId,
+					Name = p.Name,
+					DisplayName = p.DisplayName,
+					HabitatLevel = pdata.Habitat.Level,
+					RarestTier = pdata.Stats.RarestTier,
+					CollectionPercent = percent,
+					FavoriteCreatureId = pdata.FavoriteCreatureId,
+					CollectionUnlocked = unlocked,
+					CollectionTotal = total,
+				})
+			end
+		end
+	end
+
+	return { Ok = true, Players = players }
+end
+
+SetFavoriteCreature.OnServerInvoke = function(player, creatureInstanceId)
+	if typeof(creatureInstanceId) ~= "string" then
+		return { Ok = false, Error = "BadRequest" }
+	end
+
+	local data = DataService.Get(player)
+	if not data then
+		return { Ok = false, Error = "NoData" }
+	end
+
+	for _, creature in ipairs(data.Creatures) do
+		if creature.Id == creatureInstanceId then
+			data.FavoriteCreatureId = creatureInstanceId
+			AnalyticsService.Track(player, "FavoriteSet", { CreatureId = creatureInstanceId })
+			return { Ok = true }
+		end
+	end
+
+	return { Ok = false, Error = "NotOwned" }
+end
+
+VisitHabitat.OnServerInvoke = function(player, targetUserId)
+	if typeof(targetUserId) ~= "number" then
+		return { Ok = false, Error = "BadRequest" }
+	end
+	local target = Players:GetPlayerByUserId(targetUserId)
+	if not target then
+		return { Ok = false, Error = "TargetOffline" }
+	end
+	AnalyticsService.Track(player, "HabitatVisitRequested", { TargetUserId = targetUserId })
+	return {
+		Ok = true,
+		Target = {
+			UserId = target.UserId,
+			Name = target.Name,
+			DisplayName = target.DisplayName,
+		},
+	}
+end
+
+TrackClientEvent.OnServerInvoke = function(player, eventName, payload)
+	if typeof(eventName) ~= "string" then
+		return { Ok = false, Error = "BadRequest" }
+	end
+	if typeof(payload) ~= "table" then
+		payload = {}
+	end
+	AnalyticsService.Track(player, "Client_" .. eventName, payload)
+	return { Ok = true }
 end
 
 CreateTrade.OnServerInvoke = function(player, targetUserId, offeredCreatureIds)
@@ -241,9 +375,11 @@ CreateTrade.OnServerInvoke = function(player, targetUserId, offeredCreatureIds)
 
 	local ok, tradeIdOrError = TradingService.CreateTrade(player, targetPlayer, offeredCreatureIds)
 	if not ok then
+		AnalyticsService.Track(player, "TradeRequestFailed", { Reason = tradeIdOrError })
 		return { Ok = false, Error = tradeIdOrError }
 	end
 
+	AnalyticsService.Track(player, "TradeRequestSent", { TradeId = tradeIdOrError, TargetUserId = targetUserId })
 	return { Ok = true, TradeId = tradeIdOrError }
 end
 
@@ -262,6 +398,9 @@ AcceptTrade.OnServerInvoke = function(player, tradeId)
 		if target then
 			syncLeaderstats(target)
 		end
+		AnalyticsService.Track(player, "TradeAccepted", { TradeId = tradeId })
+	else
+		AnalyticsService.Track(player, "TradeAcceptFailed", { TradeId = tradeId, Reason = result })
 	end
 	return { Ok = ok, Result = result }
 end
@@ -274,6 +413,7 @@ UpgradeHabitat.OnServerInvoke = function(player)
 	local ok, result = HabitatService.Upgrade(player)
 	if ok then
 		syncLeaderstats(player)
+		AnalyticsService.Track(player, "HabitatUpgraded", { Level = result })
 	end
 	return { Ok = ok, Result = result }
 end
@@ -282,15 +422,26 @@ Players.PlayerAdded:Connect(function(player)
 	local data = DataService.Load(player)
 	ensureQuestState(data)
 	createLeaderstats(player, data)
+
+	local unlocked, total, percent = collectionProgress(data)
+	AnalyticsService.Track(player, "SessionStart", {
+		CreatureCount = #data.Creatures,
+		HabitatLevel = data.Habitat.Level,
+		CollectionPercent = percent,
+	})
+
 	DataReady:FireClient(player, {
 		Currencies = data.Currencies,
 		CreatureCount = #data.Creatures,
 		HabitatLevel = data.Habitat.Level,
 		Quests = data.Quests,
+		FavoriteCreatureId = data.FavoriteCreatureId,
+		Collection = { Unlocked = unlocked, Total = total, Percent = percent },
 	})
 end)
 
 Players.PlayerRemoving:Connect(function(player)
+	AnalyticsService.Track(player, "SessionEnd")
 	DataService.Save(player)
 	DataService.Remove(player)
 end)

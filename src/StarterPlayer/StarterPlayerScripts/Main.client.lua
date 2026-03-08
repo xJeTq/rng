@@ -19,27 +19,50 @@ local UpgradeHabitat = remotes:WaitForChild("UpgradeHabitat")
 local ClaimQuest = remotes:WaitForChild("ClaimQuest")
 local CreateTrade = remotes:WaitForChild("CreateTrade")
 local AcceptTrade = remotes:WaitForChild("AcceptTrade")
+local GetSocialSnapshot = remotes:WaitForChild("GetSocialSnapshot")
+local GetCreatureInventory = remotes:WaitForChild("GetCreatureInventory")
+local SetFavoriteCreature = remotes:WaitForChild("SetFavoriteCreature")
+local VisitHabitat = remotes:WaitForChild("VisitHabitat")
+local TrackClientEvent = remotes:WaitForChild("TrackClientEvent")
+
 local ServerAnnouncement = remotes:WaitForChild("ServerAnnouncement")
 local DataReady = remotes:WaitForChild("DataReady")
 
 local state = {
 	Currencies = { Stardust = 0, Energy = 0 },
 	Quests = {},
-	CreatureCount = 0,
 	HabitatLevel = 1,
+	Collection = { Unlocked = 0, Total = 0, Percent = 0 },
+	FavoriteCreatureId = nil,
+	Creatures = {},
+	SocialPlayers = {},
 	TutorialDone = false,
 	ActivePanel = nil,
-	PendingTradeId = nil,
+	Trade = {
+		Stage = "idle",
+		Target = nil,
+		TradeId = nil,
+		Offer = {},
+		ExpireAt = 0,
+		Locked = false,
+	},
+	Milestones = {
+		FirstCrystalOpened = false,
+		FirstQuestClaimed = false,
+		FirstShopOpen = false,
+		FirstCreatureEquipped = false,
+	},
 }
 
 local rootGui
-local toastHolder
 local panels = {}
+local toastHolder
 local objectiveLabel
 local stardustLabel
 local energyLabel
+local collectionLabel
 local tutorialArrow
-local blockInput = false
+local blockedInput = false
 
 local function make(className, props, children)
 	local obj = Instance.new(className)
@@ -52,27 +75,43 @@ local function make(className, props, children)
 	return obj
 end
 
-local function playSfx(soundKey)
-	local sound = Instance.new("Sound")
-	sound.SoundId = UIConfig.Audio[soundKey] or UIConfig.Audio.ButtonClick
-	sound.Volume = 0.4
-	sound.Parent = SoundService
-	sound:Play()
-	task.delay(2, function()
-		sound:Destroy()
+local function track(eventName, payload)
+	pcall(function()
+		TrackClientEvent:InvokeServer(eventName, payload or {})
 	end)
 end
 
-local function tweenIn(frame)
-	frame.Visible = true
-	frame.BackgroundTransparency = 1
-	TweenService:Create(frame, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		BackgroundTransparency = 0,
-	}):Play()
+local function playSfx(key, opts)
+	opts = opts or {}
+	local cfg = UIConfig.Audio.SFX[key]
+	if not cfg then
+		return
+	end
+	local s = Instance.new("Sound")
+	s.SoundId = cfg.Id
+	s.Volume = (cfg.Volume or 0.4) * (UIConfig.Audio.MasterVolume or 0.45)
+	s.PlaybackSpeed = opts.PlaybackSpeed or 1
+	s.Parent = SoundService
+	s:Play()
+	task.delay(2, function()
+		s:Destroy()
+	end)
+end
+
+local function playRaritySfx(rarity)
+	local cfg = UIConfig.Audio.RarityRevealByTier[rarity] or UIConfig.Audio.RarityRevealByTier.Common
+	local s = Instance.new("Sound")
+	s.SoundId = cfg.Id
+	s.Volume = (cfg.Volume or 0.3) * (UIConfig.Audio.MasterVolume or 0.45)
+	s.Parent = SoundService
+	s:Play()
+	task.delay(2, function()
+		s:Destroy()
+	end)
 end
 
 local function toast(message, tone)
-	local color = UIConfig.Theme.PanelAlt
+	local color = UIConfig.Theme.PanelSoft
 	if tone == "success" then
 		color = UIConfig.Theme.Success
 	elseif tone == "warning" then
@@ -82,39 +121,52 @@ local function toast(message, tone)
 	end
 
 	local item = make("Frame", {
-		Size = UDim2.new(1, 0, 0, 44),
+		Size = UDim2.new(1, 0, 0, 42),
 		BackgroundColor3 = color,
-		BackgroundTransparency = 0.05,
+		BackgroundTransparency = 0.08,
 		BorderSizePixel = 0,
 	}, {
-		make("UICorner", { CornerRadius = UDim.new(0, 12) }),
+		make("UICorner", { CornerRadius = UDim.new(0, 10) }),
 		make("TextLabel", {
 			BackgroundTransparency = 1,
 			Size = UDim2.fromScale(1, 1),
 			Font = Enum.Font.GothamBold,
-			TextSize = 15,
+			TextSize = 14,
 			TextColor3 = UIConfig.Theme.Text,
 			Text = message,
 		})
 	})
-
 	item.Parent = toastHolder
-	item.Position = UDim2.new(0, 0, 0, 12)
 	item.BackgroundTransparency = 1
-	TweenService:Create(item, TweenInfo.new(0.2), { BackgroundTransparency = 0.05, Position = UDim2.new(0, 0, 0, 0) }):Play()
-
-	task.delay(3, function()
+	TweenService:Create(item, TweenInfo.new(0.18), { BackgroundTransparency = 0.08 }):Play()
+	task.delay(2.6, function()
 		if item.Parent then
-			TweenService:Create(item, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
-			task.wait(0.22)
+			TweenService:Create(item, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
+			task.wait(0.2)
 			item:Destroy()
 		end
 	end)
 end
 
-local function updateCurrencyHud()
-	stardustLabel.Text = string.format("✨ %d", state.Currencies.Stardust or 0)
-	energyLabel.Text = string.format("🔋 %d", state.Currencies.Energy or 0)
+local function formatShort(n)
+	if n >= 1e6 then
+		return string.format("%.1fM", n / 1e6)
+	elseif n >= 1e3 then
+		return string.format("%.1fK", n / 1e3)
+	end
+	return tostring(n)
+end
+
+local function updateHud()
+	if stardustLabel then
+		stardustLabel.Text = "✨ " .. formatShort(state.Currencies.Stardust or 0)
+	end
+	if energyLabel then
+		energyLabel.Text = "🔋 " .. tostring(state.Currencies.Energy or 0)
+	end
+	if collectionLabel then
+		collectionLabel.Text = string.format("Collection %d/%d (%d%%)", state.Collection.Unlocked or 0, state.Collection.Total or 0, state.Collection.Percent or 0)
+	end
 end
 
 local function closeAllPanels()
@@ -122,118 +174,132 @@ local function closeAllPanels()
 		panel.Visible = false
 	end
 	state.ActivePanel = nil
+	playSfx("PanelClose")
 end
 
 local function openPanel(key)
-	if blockInput then
+	if blockedInput then
 		return
 	end
-	playSfx("ButtonClick")
 	if state.ActivePanel == key then
 		closeAllPanels()
 		return
 	end
 	closeAllPanels()
-	state.ActivePanel = key
-	tweenIn(panels[key])
-end
-
-local function addCloseButton(panel)
-	make("TextButton", {
-		Name = "CloseButton",
-		Text = "✕",
-		Font = Enum.Font.GothamBold,
-		TextSize = 18,
-		TextColor3 = UIConfig.Theme.Text,
-		BackgroundColor3 = UIConfig.Theme.Danger,
-		BorderSizePixel = 0,
-		Size = UDim2.fromOffset(42, 42),
-		Position = UDim2.new(1, -50, 0, 8),
-		Parent = panel,
-	}, {
-		make("UICorner", { CornerRadius = UDim.new(1, 0) }),
-	}).MouseButton1Click:Connect(closeAllPanels)
-end
-
-local function screenShake(strength, duration)
-	if not workspace.CurrentCamera then
-		return
-	end
-	local cam = workspace.CurrentCamera
-	local base = cam.CFrame
-	local start = os.clock()
-	local conn
-	conn = RunService.RenderStepped:Connect(function()
-		local elapsed = os.clock() - start
-		if elapsed > duration then
-			cam.CFrame = base
-			conn:Disconnect()
-			return
+	local panel = panels[key]
+	if panel then
+		panel.Visible = true
+		state.ActivePanel = key
+		playSfx("PanelOpen")
+		if key == "Shop" and not state.Milestones.FirstShopOpen then
+			state.Milestones.FirstShopOpen = true
+			track("FirstShopOpen")
 		end
-		local x = (math.random() - 0.5) * strength
-		local y = (math.random() - 0.5) * strength
-		cam.CFrame = base * CFrame.new(x, y, 0)
-	end)
-end
-
-local function rarityReveal(rarity, creatureName)
-	local overlay = make("Frame", {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.new(0, 0, 0),
-		BackgroundTransparency = 0.35,
-		BorderSizePixel = 0,
-		Parent = rootGui,
-	}, {
-		make("TextLabel", {
-			AnchorPoint = Vector2.new(0.5, 0.5),
-			Position = UDim2.fromScale(0.5, 0.5),
-			Size = UDim2.fromOffset(400, 160),
-			BackgroundTransparency = 1,
-			TextWrapped = true,
-			Font = Enum.Font.GothamBlack,
-			TextSize = 34,
-			TextColor3 = UIConfig.Theme.Text,
-			Text = string.format("%s\n%s", string.upper(rarity), creatureName),
-		}),
-	})
-
-	playSfx("RarityReveal")
-	if rarity == "Epic" or rarity == "Legendary" or rarity == "Cosmic" then
-		screenShake(UIConfig.GameFeel.RareShakeStrength, UIConfig.GameFeel.RareShakeDuration)
-		toast("BIG PULL! Show your friends!", "success")
 	end
-
-	task.delay(1.2, function()
-		overlay:Destroy()
-	end)
 end
 
-local function buildPanel(name, title)
+local function rarityColor(rarity)
+	return UIConfig.Theme.Rarity[rarity] or UIConfig.Theme.PanelSoft
+end
+
+local function makePanel(name, title)
 	local panel = make("Frame", {
 		Name = name,
 		Visible = false,
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.55),
-		Size = UDim2.fromScale(0.88, 0.76),
+		Position = UDim2.fromScale(0.5, 0.54),
+		Size = UDim2.fromScale(0.9, 0.78),
 		BackgroundColor3 = UIConfig.Theme.Panel,
 		BorderSizePixel = 0,
 		Parent = rootGui,
 	}, {
-		make("UICorner", { CornerRadius = UDim.new(0, 18) }),
+		make("UICorner", { CornerRadius = UDim.new(0, 16) }),
 		make("TextLabel", {
-			Size = UDim2.new(1, -80, 0, 50),
-			Position = UDim2.fromOffset(16, 8),
 			BackgroundTransparency = 1,
-			Font = Enum.Font.GothamBlack,
-			TextSize = 28,
+			Position = UDim2.fromOffset(14, 8),
+			Size = UDim2.new(1, -70, 0, 42),
 			TextXAlignment = Enum.TextXAlignment.Left,
+			Font = Enum.Font.GothamBlack,
+			TextSize = 26,
 			TextColor3 = UIConfig.Theme.Text,
 			Text = title,
 		}),
 	})
-	addCloseButton(panel)
+
+	make("TextButton", {
+		Parent = panel,
+		Position = UDim2.new(1, -48, 0, 8),
+		Size = UDim2.fromOffset(38, 38),
+		BackgroundColor3 = UIConfig.Theme.Danger,
+		Text = "✕",
+		Font = Enum.Font.GothamBold,
+		TextSize = 18,
+		TextColor3 = UIConfig.Theme.Text,
+		BorderSizePixel = 0,
+	}, { make("UICorner", { CornerRadius = UDim.new(1, 0) }) }).MouseButton1Click:Connect(closeAllPanels)
+
 	panels[name] = panel
 	return panel
+end
+
+local function refreshInventory()
+	local res = GetCreatureInventory:InvokeServer()
+	if res.Ok then
+		state.Creatures = res.Creatures
+		state.FavoriteCreatureId = res.FavoriteCreatureId
+		state.Collection = res.Collection
+		updateHud()
+	end
+end
+
+local function refreshSocial()
+	local res = GetSocialSnapshot:InvokeServer()
+	if res.Ok then
+		state.SocialPlayers = res.Players
+	end
+end
+
+local function rarityReveal(rarity, creatureName)
+	local overlay = make("Frame", {
+		Parent = rootGui,
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.35,
+		BorderSizePixel = 0,
+	}, {
+		make("TextLabel", {
+			BackgroundTransparency = 1,
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(450, 180),
+			Font = Enum.Font.GothamBlack,
+			TextSize = 38,
+			TextColor3 = rarityColor(rarity),
+			TextWrapped = true,
+			Text = string.format("%s\n%s", string.upper(rarity), creatureName),
+		}),
+	})
+
+	playRaritySfx(rarity)
+	if rarity == "Epic" or rarity == "Legendary" or rarity == "Cosmic" then
+		toast("WOW! Share this pull with your friends!", "success")
+	end
+	task.delay(1.15, function()
+		overlay:Destroy()
+	end)
+end
+
+local function rarityBadge(parent, rarity)
+	return make("TextLabel", {
+		Parent = parent,
+		BackgroundColor3 = rarityColor(rarity),
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(86, 24),
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		TextColor3 = Color3.fromRGB(32, 24, 42),
+		Text = rarity,
+	}, { make("UICorner", { CornerRadius = UDim.new(1, 0) }) })
 end
 
 local function buildHud()
@@ -247,156 +313,140 @@ local function buildHud()
 		BackgroundColor3 = UIConfig.Theme.Panel,
 		BorderSizePixel = 0,
 	}, {
-		make("UICorner", { CornerRadius = UDim.new(0, 14) }),
+		make("UICorner", { CornerRadius = UDim.new(0, 12) }),
 		make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), VerticalAlignment = Enum.VerticalAlignment.Center }),
-	}).Parent = rootGui
+	})
 
 	local topBar = rootGui.TopBar
 	stardustLabel = make("TextLabel", {
 		Parent = topBar,
-		Size = UDim2.fromOffset(130, 44),
-		BackgroundColor3 = UIConfig.Theme.PanelAlt,
+		Size = UDim2.fromOffset(120, 40),
+		BackgroundColor3 = UIConfig.Theme.PanelSoft,
 		BorderSizePixel = 0,
 		Font = Enum.Font.GothamBold,
-		TextSize = 20,
+		TextSize = 18,
 		TextColor3 = UIConfig.Theme.Text,
 		Text = "✨ 0",
 	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
+
 	energyLabel = make("TextLabel", {
 		Parent = topBar,
-		Size = UDim2.fromOffset(120, 44),
-		BackgroundColor3 = UIConfig.Theme.PanelAlt,
+		Size = UDim2.fromOffset(102, 40),
+		BackgroundColor3 = UIConfig.Theme.PanelSoft,
 		BorderSizePixel = 0,
 		Font = Enum.Font.GothamBold,
-		TextSize = 20,
+		TextSize = 18,
 		TextColor3 = UIConfig.Theme.Text,
 		Text = "🔋 0",
 	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
 
-	local friendBonus = make("TextButton", {
+	collectionLabel = make("TextLabel", {
 		Parent = topBar,
-		Size = UDim2.fromOffset(170, 44),
+		Size = UDim2.fromOffset(190, 40),
+		BackgroundColor3 = UIConfig.Theme.PanelSoft,
+		BorderSizePixel = 0,
+		Font = Enum.Font.Gotham,
+		TextSize = 14,
+		TextColor3 = UIConfig.Theme.SubText,
+		Text = "Collection 0/0 (0%)",
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
+
+	make("TextButton", {
+		Parent = topBar,
+		Size = UDim2.fromOffset(170, 40),
 		BackgroundColor3 = UIConfig.Theme.Success,
-		TextColor3 = Color3.fromRGB(16, 37, 21),
 		BorderSizePixel = 0,
 		Font = Enum.Font.GothamBold,
-		TextSize = 16,
+		TextSize = 14,
+		TextColor3 = Color3.fromRGB(20, 46, 26),
 		Text = "👫 Friend Bonus +10%",
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
-	friendBonus.MouseButton1Click:Connect(function()
-		playSfx("ButtonClick")
-		toast("Invite friends for stardust boosts!", "success")
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) }).MouseButton1Click:Connect(function()
+		toast("Play with friends for bonus stardust!", "success")
 	end)
-
-	if GameConfig.Monetization.GamePasses.VIPHabitat ~= 0 then
-		local vip = make("TextLabel", {
-			Parent = topBar,
-			Size = UDim2.fromOffset(88, 44),
-			BackgroundColor3 = UIConfig.Theme.Warning,
-			BorderSizePixel = 0,
-			Font = Enum.Font.GothamBlack,
-			TextSize = 16,
-			TextColor3 = Color3.fromRGB(68, 42, 8),
-			Text = "VIP ⭐",
-		}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
-		vip.Visible = false
-		task.spawn(function()
-			local ok, owns = pcall(function()
-				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, GameConfig.Monetization.GamePasses.VIPHabitat)
-			end)
-			if ok and owns then
-				vip.Visible = true
-			end
-		end)
-	end
 
 	objectiveLabel = make("TextLabel", {
 		Parent = rootGui,
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, insetTop + 68),
-		Size = UDim2.new(0.86, 0, 0, 42),
+		Position = UDim2.new(0.5, 0, 0, insetTop + 66),
+		Size = UDim2.new(0.86, 0, 0, 38),
 		BackgroundColor3 = UIConfig.Theme.Primary,
 		BorderSizePixel = 0,
 		Font = Enum.Font.GothamBold,
-		TextSize = 18,
-		TextColor3 = Color3.fromRGB(7, 17, 35),
-		Text = "🎯 Objective: Open a crystal to discover a critter!",
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
+		TextSize = 16,
+		TextColor3 = Color3.fromRGB(10, 23, 40),
+		Text = "🎯 Open crystals, collect critters, and show off!",
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
 end
 
-local function buildMenuButtons()
-	local holder = make("Frame", {
+local function buildTabs()
+	local tabs = make("Frame", {
 		Parent = rootGui,
 		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.fromScale(0.5, 0.99),
-		Size = UDim2.new(1, -12, 0, 84),
+		Position = UDim2.fromScale(0.5, 0.992),
+		Size = UDim2.new(1, -8, 0, 86),
 		BackgroundColor3 = UIConfig.Theme.Panel,
 		BorderSizePixel = 0,
 	}, {
-		make("UICorner", { CornerRadius = UDim.new(0, 18) }),
-		make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Center }),
+		make("UICorner", { CornerRadius = UDim.new(0, 16) }),
+		make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 5) }),
 	})
 
-	local tabData = {
-		{ "Crystals", "Open Crystals" },
+	local defs = {
+		{ "Crystals", "Crystals" },
 		{ "Creatures", "Creatures" },
 		{ "Quests", "Quests" },
 		{ "Shop", "Shop" },
 		{ "Trade", "Trade" },
-		{ "Habitat", "Habitat" },
+		{ "Social", "Social" },
 		{ "Daily", "Daily" },
+		{ "Habitat", "Habitat" },
 	}
 
-	for _, entry in ipairs(tabData) do
-		local key = entry[1]
-		local label = entry[2]
-		local button = make("TextButton", {
-			Parent = holder,
-			Size = UDim2.fromOffset(128, 58),
-			BackgroundColor3 = UIConfig.Theme.PanelAlt,
+	for _, def in ipairs(defs) do
+		local key, text = def[1], def[2]
+		make("TextButton", {
+			Parent = tabs,
+			Size = UDim2.fromOffset(108, 56),
+			BackgroundColor3 = UIConfig.Theme.PanelSoft,
 			BorderSizePixel = 0,
 			Font = Enum.Font.GothamBold,
-			TextSize = 15,
+			TextSize = 14,
 			TextColor3 = UIConfig.Theme.Text,
-			Text = label,
-		}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
-		button.MouseButton1Click:Connect(function()
+			Text = text,
+		}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) }).MouseButton1Click:Connect(function()
 			openPanel(key)
 		end)
 	end
 end
 
-local function createCrystalPanel()
-	local panel = buildPanel("Crystals", "Open Crystals")
-	local row = make("Frame", {
+local function buildCrystalsPanel()
+	local panel = makePanel("Crystals", "Open Crystals")
+	local holder = make("Frame", {
 		Parent = panel,
-		Position = UDim2.fromOffset(16, 70),
-		Size = UDim2.new(1, -32, 0, 92),
+		Position = UDim2.fromOffset(14, 62),
+		Size = UDim2.new(1, -28, 0, 96),
 		BackgroundTransparency = 1,
 	}, { make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), HorizontalAlignment = Enum.HorizontalAlignment.Center }) })
 
-	for crystalType, config in pairs(GameConfig.Crystals) do
-		local button = make("TextButton", {
-			Parent = row,
-			Size = UDim2.fromOffset(180, 86),
+	for crystalType, cfg in pairs(GameConfig.Crystals) do
+		make("TextButton", {
+			Parent = holder,
+			Size = UDim2.fromOffset(180, 88),
 			BackgroundColor3 = UIConfig.Theme.Primary,
-			TextColor3 = Color3.fromRGB(7, 20, 34),
 			BorderSizePixel = 0,
 			Font = Enum.Font.GothamBlack,
-			TextSize = 17,
-			Text = string.format("%s\n✨%d  🔋%d", crystalType, config.Cost, config.EnergyCost),
-		}, { make("UICorner", { CornerRadius = UDim.new(0, 14) }) })
-		button.MouseButton1Click:Connect(function()
-			if blockInput then
-				return
-			end
-			playSfx("CrystalOpen")
+			TextSize = 16,
+			TextColor3 = Color3.fromRGB(13, 27, 47),
+			Text = string.format("%s\n✨%d  🔋%d", crystalType, cfg.Cost, cfg.EnergyCost),
+		}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) }).MouseButton1Click:Connect(function()
 			local result = OpenCrystal:InvokeServer(crystalType)
 			if result.Ok then
-				state.CreatureCount += 1
+				if not state.Milestones.FirstCrystalOpened then
+					state.Milestones.FirstCrystalOpened = true
+					track("FirstCrystalOpened")
+				end
 				rarityReveal(result.Rarity, result.CreatureName)
-				toast(string.format("You found %s!", result.CreatureName), "success")
-				objectiveLabel.Text = "🎯 Objective: Claim quests and grow your habitat!"
+				refreshInventory()
 			else
 				toast("Could not open: " .. tostring(result.Error), "warning")
 			end
@@ -404,186 +454,227 @@ local function createCrystalPanel()
 	end
 end
 
-local function createCollectionPanel()
-	local panel = buildPanel("Creatures", "Creature Collection")
-	make("TextLabel", {
+local function buildCreaturesPanel()
+	local panel = makePanel("Creatures", "My Critters")
+	local list = make("ScrollingFrame", {
 		Parent = panel,
-		Position = UDim2.fromOffset(20, 66),
-		Size = UDim2.new(1, -40, 0, 28),
-		BackgroundTransparency = 1,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Font = Enum.Font.GothamBold,
-		TextSize = 18,
-		TextColor3 = UIConfig.Theme.SubText,
-		Text = "Collect all cosmic critters!",
-	})
-
-	local gridHolder = make("ScrollingFrame", {
-		Parent = panel,
-		Position = UDim2.fromOffset(18, 100),
-		Size = UDim2.new(1, -36, 1, -130),
-		CanvasSize = UDim2.new(0, 0, 0, 0),
-		ScrollBarThickness = 8,
+		Position = UDim2.fromOffset(14, 58),
+		Size = UDim2.new(1, -28, 1, -74),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(),
+		ScrollBarThickness = 8,
 	})
 	local layout = make("UIGridLayout", {
-		Parent = gridHolder,
-		CellSize = UDim2.fromOffset(148, 130),
-		CellPadding = UDim2.fromOffset(10, 10),
+		Parent = list,
+		CellSize = UDim2.fromOffset(170, 120),
+		CellPadding = UDim2.fromOffset(8, 8),
 	})
 
-	local names = { "Star Bunny", "Nebula Slime", "Meteor Turtle", "Comet Fox", "Galaxy Dragon", "Black Hole Cat" }
-	for i, name in ipairs(names) do
-		make("Frame", {
-			Parent = gridHolder,
-			BackgroundColor3 = UIConfig.Theme.PanelAlt,
-			BorderSizePixel = 0,
-			Size = UDim2.fromOffset(148, 130),
-		}, {
-			make("UICorner", { CornerRadius = UDim.new(0, 12) }),
+	local function render()
+		for _, child in ipairs(list:GetChildren()) do
+			if child:IsA("Frame") then
+				child:Destroy()
+			end
+		end
+
+		for _, creature in ipairs(state.Creatures) do
+			local card = make("Frame", {
+				Parent = list,
+				BackgroundColor3 = UIConfig.Theme.PanelSoft,
+				BorderSizePixel = 0,
+			}, {
+				make("UICorner", { CornerRadius = UDim.new(0, 12) }),
+			})
+			rarityBadge(card, creature.Rarity).Position = UDim2.fromOffset(8, 8)
 			make("TextLabel", {
-				Size = UDim2.new(1, -12, 0, 60),
-				Position = UDim2.fromOffset(6, 12),
+				Parent = card,
+				Position = UDim2.fromOffset(8, 38),
+				Size = UDim2.new(1, -16, 0, 28),
 				BackgroundTransparency = 1,
-				TextWrapped = true,
 				Font = Enum.Font.GothamBold,
-				TextSize = 16,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextSize = 14,
 				TextColor3 = UIConfig.Theme.Text,
-				Text = name,
-			}),
+				Text = creature.Name,
+			})
 			make("TextLabel", {
-				Size = UDim2.new(1, -12, 0, 24),
-				Position = UDim2.new(0, 6, 1, -30),
+				Parent = card,
+				Position = UDim2.fromOffset(8, 66),
+				Size = UDim2.new(1, -16, 0, 20),
 				BackgroundTransparency = 1,
 				Font = Enum.Font.Gotham,
-				TextSize = 14,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextSize = 12,
 				TextColor3 = UIConfig.Theme.SubText,
-				Text = i <= state.CreatureCount and "Unlocked" or "Locked",
-			}),
-		})
+				Text = "⭐ Stardust +" .. tostring(creature.Production),
+			})
+			local favText = state.FavoriteCreatureId == creature.Id and "Showcased" or "Showcase"
+			make("TextButton", {
+				Parent = card,
+				Position = UDim2.new(1, -94, 1, -30),
+				Size = UDim2.fromOffset(86, 24),
+				BackgroundColor3 = UIConfig.Theme.Warning,
+				BorderSizePixel = 0,
+				Font = Enum.Font.GothamBold,
+				TextSize = 11,
+				TextColor3 = Color3.fromRGB(53, 35, 9),
+				Text = favText,
+			}, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) }).MouseButton1Click:Connect(function()
+				local result = SetFavoriteCreature:InvokeServer(creature.Id)
+				if result.Ok then
+					state.FavoriteCreatureId = creature.Id
+					if not state.Milestones.FirstCreatureEquipped then
+						state.Milestones.FirstCreatureEquipped = true
+						track("FirstCreatureEquipped")
+					end
+					toast("Favorite creature set for showcase!", "success")
+					render()
+				else
+					toast("Could not set favorite.", "warning")
+				end
+			end)
+		end
 	end
 
 	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-		gridHolder.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
+		list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+	end)
+	panel:GetPropertyChangedSignal("Visible"):Connect(function()
+		if panel.Visible then
+			refreshInventory()
+			render()
+		end
 	end)
 end
 
-local function createQuestPanel()
-	local panel = buildPanel("Quests", "Daily Quests")
+local function buildQuestPanel()
+	local panel = makePanel("Quests", "Daily Quests")
 	local list = make("ScrollingFrame", {
 		Parent = panel,
-		Position = UDim2.fromOffset(16, 66),
-		Size = UDim2.new(1, -32, 1, -84),
-		CanvasSize = UDim2.new(0, 0, 0, 0),
-		ScrollBarThickness = 8,
+		Position = UDim2.fromOffset(14, 58),
+		Size = UDim2.new(1, -28, 1, -74),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(),
+		ScrollBarThickness = 8,
 	})
 	local layout = make("UIListLayout", { Parent = list, Padding = UDim.new(0, 8) })
 
-	for _, quest in ipairs(state.Quests) do
-		local card = make("Frame", {
-			Parent = list,
-			Size = UDim2.new(1, -4, 0, 78),
-			BackgroundColor3 = UIConfig.Theme.PanelAlt,
-			BorderSizePixel = 0,
-		}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
-		make("TextLabel", {
-			Parent = card,
-			Position = UDim2.fromOffset(12, 8),
-			Size = UDim2.new(1, -128, 0, 28),
-			BackgroundTransparency = 1,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Font = Enum.Font.GothamBold,
-			TextSize = 16,
-			TextColor3 = UIConfig.Theme.Text,
-			Text = string.format("%s (%d/%d)", quest.Id, quest.Progress, quest.Goal),
-		})
-		local claim = make("TextButton", {
-			Parent = card,
-			Position = UDim2.new(1, -106, 0.5, -18),
-			Size = UDim2.fromOffset(96, 36),
-			BackgroundColor3 = UIConfig.Theme.Success,
-			BorderSizePixel = 0,
-			Font = Enum.Font.GothamBold,
-			TextSize = 14,
-			TextColor3 = Color3.fromRGB(22, 48, 21),
-			Text = quest.Claimed and "Claimed" or "Claim",
-		}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
-		claim.Active = not quest.Claimed
-		claim.MouseButton1Click:Connect(function()
-			local result = ClaimQuest:InvokeServer(quest.Id)
-			if result.Ok then
-				playSfx("QuestComplete")
-				toast(string.format("Quest complete! +%d Stardust", result.Reward), "success")
-				claim.Text = "Claimed"
-				claim.Active = false
-			else
-				toast("Quest not ready: " .. tostring(result.Error), "warning")
-			end
-		end)
+	local function render()
+		for _, child in ipairs(list:GetChildren()) do
+			if child:IsA("Frame") then child:Destroy() end
+		end
+		for _, quest in ipairs(state.Quests) do
+			local card = make("Frame", {
+				Parent = list,
+				Size = UDim2.new(1, -4, 0, 78),
+				BackgroundColor3 = UIConfig.Theme.PanelSoft,
+				BorderSizePixel = 0,
+			}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
+			make("TextLabel", {
+				Parent = card,
+				Position = UDim2.fromOffset(10, 8),
+				Size = UDim2.new(1, -120, 0, 26),
+				BackgroundTransparency = 1,
+				Font = Enum.Font.GothamBold,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextSize = 15,
+				TextColor3 = UIConfig.Theme.Text,
+				Text = string.format("%s (%d/%d)", quest.Id, quest.Progress, quest.Goal),
+			})
+			local claim = make("TextButton", {
+				Parent = card,
+				Position = UDim2.new(1, -102, 0.5, -16),
+				Size = UDim2.fromOffset(92, 32),
+				BackgroundColor3 = quest.Claimed and UIConfig.Theme.Panel or UIConfig.Theme.Success,
+				BorderSizePixel = 0,
+				Font = Enum.Font.GothamBold,
+				TextSize = 13,
+				TextColor3 = UIConfig.Theme.Text,
+				Text = quest.Claimed and "Claimed" or "Claim",
+			}, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
+			claim.Active = not quest.Claimed
+			claim.MouseButton1Click:Connect(function()
+				local result = ClaimQuest:InvokeServer(quest.Id)
+				if result.Ok then
+					playSfx("QuestComplete")
+					if not state.Milestones.FirstQuestClaimed then
+						state.Milestones.FirstQuestClaimed = true
+						track("FirstQuestClaimed")
+					end
+					quest.Claimed = true
+					refreshInventory()
+					toast("Quest completed! +" .. tostring(result.Reward), "success")
+					render()
+				else
+					toast("Quest not ready: " .. tostring(result.Error), "warning")
+				end
+			end)
+		end
 	end
 
 	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 		list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
 	end)
+	panel:GetPropertyChangedSignal("Visible"):Connect(function()
+		if panel.Visible then render() end
+	end)
 end
 
-local function createShopPanel()
-	local panel = buildPanel("Shop", "Shop")
-	make("TextLabel", {
+local function buildShopPanel()
+	local panel = makePanel("Shop", "Shop")
+	local list = make("ScrollingFrame", {
 		Parent = panel,
-		Position = UDim2.fromOffset(16, 56),
-		Size = UDim2.new(1, -32, 0, 26),
-		BackgroundTransparency = 1,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Font = Enum.Font.Gotham,
-		TextSize = 15,
-		TextColor3 = UIConfig.Theme.SubText,
-		Text = "Boost speed, style, and convenience.",
-	})
-
-	local scroller = make("ScrollingFrame", {
-		Parent = panel,
-		Position = UDim2.fromOffset(16, 86),
-		Size = UDim2.new(1, -32, 1, -102),
+		Position = UDim2.fromOffset(14, 58),
+		Size = UDim2.new(1, -28, 1, -74),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
-		ScrollBarThickness = 8,
 		CanvasSize = UDim2.new(),
+		ScrollBarThickness = 8,
 	})
-	local layout = make("UIListLayout", { Parent = scroller, Padding = UDim.new(0, 8) })
+	local layout = make("UIListLayout", { Parent = list, Padding = UDim.new(0, 8) })
 
-	local cards = {
-		{ Name = "Starter Offer", Desc = "✨ + 🔋 bundle to jump-start your habitat", Type = "Product", Id = GameConfig.Monetization.DeveloperProducts.CrystalBundle },
-		{ Name = "VIP Habitat", Desc = "Exclusive style + daily bonus vibes", Type = "Pass", Id = GameConfig.Monetization.GamePasses.VIPHabitat },
-		{ Name = "Extra Creature Slots", Desc = "Keep more favorites equipped and shown", Type = "Pass", Id = GameConfig.Monetization.GamePasses.ExtraCreatureSlots },
-		{ Name = "Energy Refill", Desc = "Open more crystals right now", Type = "Product", Id = GameConfig.Monetization.DeveloperProducts.EnergyRefill },
+	local products = {
+		{ Category = "Starter", Name = "Starter Cosmic Pack", Desc = "Energy + stardust to jump in fast.", Type = "Product", Id = GameConfig.Monetization.DeveloperProducts.CrystalBundle },
+		{ Category = "VIP", Name = "VIP Habitat", Desc = "Exclusive look + daily bonus style.", Type = "Pass", Id = GameConfig.Monetization.GamePasses.VIPHabitat },
+		{ Category = "Slots", Name = "Extra Creature Slots", Desc = "Keep more critters for flex and trade.", Type = "Pass", Id = GameConfig.Monetization.GamePasses.ExtraCreatureSlots },
+		{ Category = "Boost", Name = "Energy Refill", Desc = "Open more crystals instantly.", Type = "Product", Id = GameConfig.Monetization.DeveloperProducts.EnergyRefill },
 	}
 
-	for _, info in ipairs(cards) do
+	for _, info in ipairs(products) do
 		local card = make("Frame", {
-			Parent = scroller,
-			Size = UDim2.new(1, -4, 0, 84),
-			BackgroundColor3 = UIConfig.Theme.PanelAlt,
+			Parent = list,
+			Size = UDim2.new(1, -4, 0, 96),
+			BackgroundColor3 = UIConfig.Theme.PanelSoft,
 			BorderSizePixel = 0,
 		}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
 		make("TextLabel", {
 			Parent = card,
-			Position = UDim2.fromOffset(12, 6),
-			Size = UDim2.new(1, -140, 0, 30),
+			Position = UDim2.fromOffset(10, 8),
+			Size = UDim2.fromOffset(66, 22),
+			BackgroundColor3 = UIConfig.Theme.Warning,
+			BorderSizePixel = 0,
+			Font = Enum.Font.GothamBlack,
+			TextSize = 11,
+			TextColor3 = Color3.fromRGB(53, 35, 9),
+			Text = info.Category,
+		}, { make("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+		make("TextLabel", {
+			Parent = card,
+			Position = UDim2.fromOffset(86, 7),
+			Size = UDim2.new(1, -190, 0, 26),
 			BackgroundTransparency = 1,
 			TextXAlignment = Enum.TextXAlignment.Left,
 			Font = Enum.Font.GothamBold,
-			TextSize = 17,
+			TextSize = 16,
 			TextColor3 = UIConfig.Theme.Text,
 			Text = info.Name,
 		})
 		make("TextLabel", {
 			Parent = card,
-			Position = UDim2.fromOffset(12, 34),
-			Size = UDim2.new(1, -146, 0, 44),
+			Position = UDim2.fromOffset(10, 36),
+			Size = UDim2.new(1, -120, 0, 48),
 			BackgroundTransparency = 1,
 			TextWrapped = true,
 			TextXAlignment = Enum.TextXAlignment.Left,
@@ -592,22 +683,22 @@ local function createShopPanel()
 			TextColor3 = UIConfig.Theme.SubText,
 			Text = info.Desc,
 		})
-		local buy = make("TextButton", {
+		make("TextButton", {
 			Parent = card,
-			Position = UDim2.new(1, -106, 0.5, -20),
-			Size = UDim2.fromOffset(96, 40),
-			BackgroundColor3 = UIConfig.Theme.Warning,
+			Position = UDim2.new(1, -98, 0.5, -18),
+			Size = UDim2.fromOffset(88, 36),
+			BackgroundColor3 = UIConfig.Theme.Success,
 			BorderSizePixel = 0,
 			Font = Enum.Font.GothamBold,
-			TextSize = 14,
-			TextColor3 = Color3.fromRGB(52, 34, 9),
+			TextSize = 13,
+			TextColor3 = Color3.fromRGB(20, 48, 26),
 			Text = "Get",
-		}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
-		buy.MouseButton1Click:Connect(function()
+		}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) }).MouseButton1Click:Connect(function()
 			if info.Id == 0 then
-				toast("Set product IDs in GameConfig first.", "warning")
+				toast("Set this product ID in GameConfig.", "warning")
 				return
 			end
+			track("PurchasePromptOpened", { Offer = info.Name, Type = info.Type })
 			if info.Type == "Pass" then
 				MarketplaceService:PromptGamePassPurchase(player, info.Id)
 			else
@@ -617,255 +708,351 @@ local function createShopPanel()
 	end
 
 	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-		scroller.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
+		list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
 	end)
 end
 
-local function createTradePanel()
-	local panel = buildPanel("Trade", "Trade Hub")
-	make("TextLabel", {
+local function buildTradePanel()
+	local panel = makePanel("Trade", "Trade Center")
+	local left = make("Frame", {
 		Parent = panel,
-		Position = UDim2.fromOffset(16, 62),
-		Size = UDim2.new(1, -32, 0, 24),
-		BackgroundTransparency = 1,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Font = Enum.Font.Gotham,
-		TextSize = 14,
-		TextColor3 = UIConfig.Theme.SubText,
-		Text = "Friendly reminder: Double-check before confirming!",
-	})
-
-	local targetBox = make("TextBox", {
-		Parent = panel,
-		Position = UDim2.fromOffset(16, 92),
-		Size = UDim2.new(1, -32, 0, 46),
-		BackgroundColor3 = UIConfig.Theme.PanelAlt,
+		Position = UDim2.fromOffset(14, 58),
+		Size = UDim2.new(0.42, 0, 1, -74),
+		BackgroundColor3 = UIConfig.Theme.PanelSoft,
 		BorderSizePixel = 0,
-		PlaceholderText = "Target UserId",
-		Text = "",
-		Font = Enum.Font.GothamBold,
-		TextSize = 16,
-		TextColor3 = UIConfig.Theme.Text,
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
 
-	local idsBox = make("TextBox", {
+	local right = make("Frame", {
 		Parent = panel,
-		Position = UDim2.fromOffset(16, 146),
-		Size = UDim2.new(1, -32, 0, 46),
-		BackgroundColor3 = UIConfig.Theme.PanelAlt,
+		Position = UDim2.new(0.44, 8, 0, 58),
+		Size = UDim2.new(0.56, -22, 1, -74),
+		BackgroundColor3 = UIConfig.Theme.PanelSoft,
 		BorderSizePixel = 0,
-		PlaceholderText = "Creature IDs (comma separated)",
-		Text = "",
-		Font = Enum.Font.Gotham,
-		TextSize = 15,
-		TextColor3 = UIConfig.Theme.Text,
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
 
-	local timerLabel = make("TextLabel", {
-		Parent = panel,
-		Position = UDim2.fromOffset(16, 198),
-		Size = UDim2.new(1, -32, 0, 24),
-		BackgroundTransparency = 1,
-		Text = "Trade requests expire in 120s.",
-		Font = Enum.Font.GothamBold,
-		TextSize = 14,
-		TextColor3 = UIConfig.Theme.Warning,
-	})
+	make("TextLabel", { Parent = left, Position = UDim2.fromOffset(10, 8), Size = UDim2.new(1, -20, 0, 22), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = UIConfig.Theme.Text, Text = "Players" })
+	make("TextLabel", { Parent = right, Position = UDim2.fromOffset(10, 8), Size = UDim2.new(1, -20, 0, 22), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = UIConfig.Theme.Text, Text = "Your Offer" })
 
-	local request = make("TextButton", {
-		Parent = panel,
-		Position = UDim2.fromOffset(16, 230),
-		Size = UDim2.fromOffset(180, 48),
-		BackgroundColor3 = UIConfig.Theme.Primary,
-		BorderSizePixel = 0,
-		Font = Enum.Font.GothamBold,
-		TextSize = 16,
-		TextColor3 = Color3.fromRGB(7, 22, 40),
-		Text = "Send Trade Request",
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
+	local playerList = make("ScrollingFrame", { Parent = left, Position = UDim2.fromOffset(8, 32), Size = UDim2.new(1, -16, 0.42, 0), CanvasSize = UDim2.new(), ScrollBarThickness = 6, BackgroundTransparency = 1, BorderSizePixel = 0 })
+	local playerLayout = make("UIListLayout", { Parent = playerList, Padding = UDim.new(0, 6) })
 
-	local accept = make("TextButton", {
-		Parent = panel,
-		Position = UDim2.fromOffset(206, 230),
-		Size = UDim2.fromOffset(140, 48),
-		BackgroundColor3 = UIConfig.Theme.Success,
-		BorderSizePixel = 0,
-		Font = Enum.Font.GothamBold,
-		TextSize = 16,
-		TextColor3 = Color3.fromRGB(19, 49, 25),
-		Text = "Confirm",
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) })
+	local invList = make("ScrollingFrame", { Parent = left, Position = UDim2.new(0, 8, 0.45, 0), Size = UDim2.new(1, -16, 0.55, -8), CanvasSize = UDim2.new(), ScrollBarThickness = 6, BackgroundTransparency = 1, BorderSizePixel = 0 })
+	local invLayout = make("UIListLayout", { Parent = invList, Padding = UDim.new(0, 6) })
 
-	request.MouseButton1Click:Connect(function()
-		local userId = tonumber(targetBox.Text)
-		if not userId then
-			toast("Enter a valid UserId.", "warning")
+	local offerList = make("ScrollingFrame", { Parent = right, Position = UDim2.fromOffset(8, 32), Size = UDim2.new(1, -16, 0.62, 0), CanvasSize = UDim2.new(), ScrollBarThickness = 6, BackgroundTransparency = 1, BorderSizePixel = 0 })
+	local offerLayout = make("UIListLayout", { Parent = offerList, Padding = UDim.new(0, 6) })
+
+	local statusLabel = make("TextLabel", { Parent = right, Position = UDim2.new(0, 10, 0.65, 0), Size = UDim2.new(1, -20, 0, 24), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = UIConfig.Theme.Warning, Text = "Pick player and select critters to offer." })
+	local timerLabel = make("TextLabel", { Parent = right, Position = UDim2.new(0, 10, 0.70, 0), Size = UDim2.new(1, -20, 0, 24), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = UIConfig.Theme.SubText, Text = "Expiry: --" })
+
+	local sendButton = make("TextButton", { Parent = right, Position = UDim2.new(0, 10, 1, -46), Size = UDim2.fromOffset(148, 36), BackgroundColor3 = UIConfig.Theme.Primary, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Color3.fromRGB(8, 21, 38), Text = "Send Request" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) })
+	local confirmButton = make("TextButton", { Parent = right, Position = UDim2.new(0, 164, 1, -46), Size = UDim2.fromOffset(148, 36), BackgroundColor3 = UIConfig.Theme.Success, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Color3.fromRGB(19, 46, 24), Text = "Confirm Trade" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) })
+	make("TextLabel", { Parent = right, Position = UDim2.new(0, 320, 1, -44), Size = UDim2.new(1, -328, 0, 36), BackgroundTransparency = 1, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = UIConfig.Theme.Warning, Text = "Safety: Always double-check names and rarity before confirm." })
+
+	local function renderOfferList()
+		for _, ch in ipairs(offerList:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
+		for _, creature in ipairs(state.Trade.Offer) do
+			local row = make("Frame", { Parent = offerList, Size = UDim2.new(1, -4, 0, 36), BackgroundColor3 = UIConfig.Theme.Panel, BorderSizePixel = 0 }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
+			rarityBadge(row, creature.Rarity).Position = UDim2.fromOffset(6, 6)
+			make("TextLabel", { Parent = row, Position = UDim2.fromOffset(98, 7), Size = UDim2.new(1, -130, 0, 22), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = UIConfig.Theme.Text, Text = creature.Name })
+			make("TextButton", { Parent = row, Position = UDim2.new(1, -30, 0.5, -12), Size = UDim2.fromOffset(24, 24), BackgroundColor3 = UIConfig.Theme.Danger, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = UIConfig.Theme.Text, Text = "-" }, { make("UICorner", { CornerRadius = UDim.new(1, 0) }) }).MouseButton1Click:Connect(function()
+				for i, c in ipairs(state.Trade.Offer) do
+					if c.Id == creature.Id then table.remove(state.Trade.Offer, i) break end
+				end
+				renderOfferList()
+			end)
+		end
+	end
+
+	local function renderInventory()
+		for _, ch in ipairs(invList:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
+		for _, creature in ipairs(state.Creatures) do
+			local row = make("Frame", { Parent = invList, Size = UDim2.new(1, -4, 0, 36), BackgroundColor3 = UIConfig.Theme.Panel, BorderSizePixel = 0 }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
+			rarityBadge(row, creature.Rarity).Position = UDim2.fromOffset(6, 6)
+			make("TextLabel", { Parent = row, Position = UDim2.fromOffset(98, 7), Size = UDim2.new(1, -130, 0, 22), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = UIConfig.Theme.Text, Text = creature.Name })
+			make("TextButton", { Parent = row, Position = UDim2.new(1, -30, 0.5, -12), Size = UDim2.fromOffset(24, 24), BackgroundColor3 = UIConfig.Theme.Success, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = UIConfig.Theme.Text, Text = "+" }, { make("UICorner", { CornerRadius = UDim.new(1, 0) }) }).MouseButton1Click:Connect(function()
+				if #state.Trade.Offer >= GameConfig.Limits.MaxTradeSlots then
+					toast("Offer is full.", "warning")
+					return
+				end
+				for _, c in ipairs(state.Trade.Offer) do
+					if c.Id == creature.Id then
+						toast("Already in offer.", "warning")
+						return
+					end
+				end
+				table.insert(state.Trade.Offer, creature)
+				renderOfferList()
+			end)
+		end
+	end
+
+	local function renderPlayers()
+		for _, ch in ipairs(playerList:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
+		for _, pinfo in ipairs(state.SocialPlayers) do
+			local row = make("Frame", { Parent = playerList, Size = UDim2.new(1, -4, 0, 44), BackgroundColor3 = UIConfig.Theme.Panel, BorderSizePixel = 0 }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
+			make("TextLabel", { Parent = row, Position = UDim2.fromOffset(8, 6), Size = UDim2.new(1, -82, 0, 32), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = UIConfig.Theme.Text, Text = string.format("%s  (%d%%)", pinfo.DisplayName, pinfo.CollectionPercent) })
+			make("TextButton", { Parent = row, Position = UDim2.new(1, -70, 0.5, -14), Size = UDim2.fromOffset(62, 28), BackgroundColor3 = UIConfig.Theme.Primary, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = Color3.fromRGB(9, 21, 37), Text = "Select" }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) }).MouseButton1Click:Connect(function()
+				state.Trade.Target = pinfo
+				statusLabel.Text = "Target: " .. pinfo.DisplayName .. " • choose creatures"
+			end)
+		end
+	end
+
+	sendButton.MouseButton1Click:Connect(function()
+		if state.Trade.Locked then
+			toast("Please wait.", "warning")
 			return
 		end
-		local ids = {}
-		for id in string.gmatch(idsBox.Text, "[^,%s]+") do
-			table.insert(ids, id)
+		if not state.Trade.Target then
+			toast("Select a player first.", "warning")
+			return
 		end
-		local res = CreateTrade:InvokeServer(userId, ids)
+		if #state.Trade.Offer == 0 then
+			toast("Add at least one creature.", "warning")
+			return
+		end
+		state.Trade.Locked = true
+		local ids = {}
+		for _, c in ipairs(state.Trade.Offer) do table.insert(ids, c.Id) end
+		local res = CreateTrade:InvokeServer(state.Trade.Target.UserId, ids)
+		state.Trade.Locked = false
 		if res.Ok then
-			state.PendingTradeId = res.TradeId
+			state.Trade.TradeId = res.TradeId
+			state.Trade.ExpireAt = os.time() + 120
+			state.Trade.Stage = "requested"
+			statusLabel.Text = "Trade request sent to " .. state.Trade.Target.DisplayName
+			track("TradeRequestSent", { TargetUserId = state.Trade.Target.UserId, OfferSize = #ids })
 			playSfx("TradeConfirm")
-			toast("Trade request sent!", "success")
 		else
-			toast("Trade failed: " .. tostring(res.Error), "warning")
+			toast("Trade request failed: " .. tostring(res.Error), "warning")
+			track("TradeRequestFailed", { Reason = tostring(res.Error) })
 		end
 	end)
 
-	accept.MouseButton1Click:Connect(function()
-		if not state.PendingTradeId then
-			toast("No pending trade id yet.", "warning")
+	confirmButton.MouseButton1Click:Connect(function()
+		if not state.Trade.TradeId then
+			toast("No active trade request.", "warning")
 			return
 		end
-		local res = AcceptTrade:InvokeServer(state.PendingTradeId)
+		if os.time() >= state.Trade.ExpireAt then
+			toast("Trade expired. Send a new one.", "warning")
+			track("TradeExpired", { TradeId = state.Trade.TradeId })
+			state.Trade.TradeId = nil
+			return
+		end
+		local res = AcceptTrade:InvokeServer(state.Trade.TradeId)
 		if res.Ok then
+			track("TradeCompleted", { TradeId = state.Trade.TradeId })
+			toast("Trade completed!", "success")
 			playSfx("TradeConfirm")
-			toast("Trade complete!", "success")
-			state.PendingTradeId = nil
+			state.Trade = { Stage = "idle", Target = nil, TradeId = nil, Offer = {}, ExpireAt = 0, Locked = false }
+			renderOfferList()
+			refreshInventory()
 		else
 			toast("Trade not completed: " .. tostring(res.Result), "warning")
+			track("TradeAcceptFailed", { Reason = tostring(res.Result) })
 		end
 	end)
 
-	timerLabel.Text = "Trade requests expire in 120s • confirm carefully"
+	RunService.Heartbeat:Connect(function()
+		if state.Trade.TradeId and state.Trade.ExpireAt > 0 then
+			local leftSec = state.Trade.ExpireAt - os.time()
+			if leftSec <= 0 then
+				timerLabel.Text = "Expiry: expired"
+			else
+				timerLabel.Text = "Expiry: " .. tostring(leftSec) .. "s"
+			end
+		else
+			timerLabel.Text = "Expiry: --"
+		end
+	end)
+
+	playerLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() playerList.CanvasSize = UDim2.new(0, 0, 0, playerLayout.AbsoluteContentSize.Y + 8) end)
+	invLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() invList.CanvasSize = UDim2.new(0, 0, 0, invLayout.AbsoluteContentSize.Y + 8) end)
+	offerLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() offerList.CanvasSize = UDim2.new(0, 0, 0, offerLayout.AbsoluteContentSize.Y + 8) end)
+
+	panel:GetPropertyChangedSignal("Visible"):Connect(function()
+		if panel.Visible then
+			refreshSocial()
+			refreshInventory()
+			renderPlayers()
+			renderInventory()
+			renderOfferList()
+		end
+	end)
 end
 
-local function createHabitatPanel()
-	local panel = buildPanel("Habitat", "My Habitat")
-	local levelLabel = make("TextLabel", {
+local function buildSocialPanel()
+	local panel = makePanel("Social", "Social & Visits")
+	local list = make("ScrollingFrame", {
 		Parent = panel,
-		Position = UDim2.fromOffset(16, 66),
-		Size = UDim2.new(1, -32, 0, 32),
+		Position = UDim2.fromOffset(14, 58),
+		Size = UDim2.new(1, -28, 1, -74),
 		BackgroundTransparency = 1,
-		TextXAlignment = Enum.TextXAlignment.Left,
+		BorderSizePixel = 0,
+		CanvasSize = UDim2.new(),
+		ScrollBarThickness = 8,
+	})
+	local layout = make("UIListLayout", { Parent = list, Padding = UDim.new(0, 8) })
+
+	local function render()
+		for _, ch in ipairs(list:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
+		for _, pinfo in ipairs(state.SocialPlayers) do
+			local card = make("Frame", {
+				Parent = list,
+				Size = UDim2.new(1, -4, 0, 88),
+				BackgroundColor3 = UIConfig.Theme.PanelSoft,
+				BorderSizePixel = 0,
+			}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
+			make("TextLabel", { Parent = card, Position = UDim2.fromOffset(10, 8), Size = UDim2.new(1, -120, 0, 24), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = UIConfig.Theme.Text, Text = pinfo.DisplayName .. " @" .. pinfo.Name })
+			make("TextLabel", { Parent = card, Position = UDim2.fromOffset(10, 34), Size = UDim2.new(1, -120, 0, 20), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = rarityColor(pinfo.RarestTier), Text = "Rarest: " .. pinfo.RarestTier })
+			make("TextLabel", { Parent = card, Position = UDim2.fromOffset(10, 54), Size = UDim2.new(1, -120, 0, 22), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = UIConfig.Theme.SubText, Text = string.format("Collection %d/%d (%d%%) • Habitat Lv.%d", pinfo.CollectionUnlocked, pinfo.CollectionTotal, pinfo.CollectionPercent, pinfo.HabitatLevel) })
+			make("TextButton", { Parent = card, Position = UDim2.new(1, -102, 0.5, -16), Size = UDim2.fromOffset(92, 32), BackgroundColor3 = UIConfig.Theme.Primary, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Color3.fromRGB(10, 24, 40), Text = "Visit" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) }).MouseButton1Click:Connect(function()
+				local result = VisitHabitat:InvokeServer(pinfo.UserId)
+				if result.Ok then
+					toast("Visiting " .. result.Target.DisplayName .. "'s habitat!", "success")
+					track("HabitatVisitStarted", { TargetUserId = pinfo.UserId })
+				else
+					toast("Could not visit: " .. tostring(result.Error), "warning")
+				end
+			end)
+		end
+	end
+
+	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() list.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8) end)
+	panel:GetPropertyChangedSignal("Visible"):Connect(function()
+		if panel.Visible then refreshSocial(); render() end
+	end)
+end
+
+local function buildDailyPanel()
+	local panel = makePanel("Daily", "Daily Reward")
+	make("TextLabel", {
+		Parent = panel,
+		Position = UDim2.new(0.5, -160, 0.5, -80),
+		Size = UDim2.fromOffset(320, 34),
+		BackgroundTransparency = 1,
+		Text = "Claim your daily cosmic gift!",
 		Font = Enum.Font.GothamBold,
 		TextSize = 20,
 		TextColor3 = UIConfig.Theme.Text,
-		Text = "Habitat Level: 1",
 	})
-	levelLabel.Text = "Habitat Level: " .. tostring(state.HabitatLevel)
-
-	local upgrade = make("TextButton", {
+	make("TextButton", {
 		Parent = panel,
-		Position = UDim2.fromOffset(16, 108),
-		Size = UDim2.fromOffset(200, 52),
-		BackgroundColor3 = UIConfig.Theme.Success,
-		BorderSizePixel = 0,
-		Font = Enum.Font.GothamBold,
-		TextSize = 16,
-		TextColor3 = Color3.fromRGB(20, 54, 24),
-		Text = "Upgrade Habitat",
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
-	upgrade.MouseButton1Click:Connect(function()
-		local res = UpgradeHabitat:InvokeServer()
-		if res.Ok then
-			state.HabitatLevel = res.Result
-			levelLabel.Text = "Habitat Level: " .. tostring(state.HabitatLevel)
-			toast("Habitat upgraded!", "success")
-		else
-			toast("Upgrade failed: " .. tostring(res.Result), "warning")
-		end
-	end)
-
-	local showcase = make("TextButton", {
-		Parent = panel,
-		Position = UDim2.fromOffset(226, 108),
-		Size = UDim2.fromOffset(210, 52),
-		BackgroundColor3 = UIConfig.Theme.Warning,
-		BorderSizePixel = 0,
-		Font = Enum.Font.GothamBold,
-		TextSize = 16,
-		TextColor3 = Color3.fromRGB(58, 40, 12),
-		Text = "Set Favorite Showcase",
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
-	showcase.MouseButton1Click:Connect(function()
-		toast("Favorite creature set on showcase pedestal!", "success")
-	end)
-end
-
-local function createDailyPanel()
-	local panel = buildPanel("Daily", "Daily Reward")
-	local claimButton = make("TextButton", {
-		Parent = panel,
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(260, 72),
+		Position = UDim2.new(0.5, -130, 0.5, -28),
+		Size = UDim2.fromOffset(260, 70),
 		BackgroundColor3 = UIConfig.Theme.Warning,
 		BorderSizePixel = 0,
 		Font = Enum.Font.GothamBlack,
 		TextSize = 24,
-		TextColor3 = Color3.fromRGB(62, 43, 12),
+		TextColor3 = Color3.fromRGB(64, 42, 9),
 		Text = "Claim Daily ✨",
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 14) }) })
-	claimButton.MouseButton1Click:Connect(function()
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 14) }) }).MouseButton1Click:Connect(function()
 		local result = ClaimDailyReward:InvokeServer()
 		if result.Ok then
 			playSfx("DailyClaim")
-			toast(string.format("Daily claimed! +%d", result.Reward), "success")
+			toast(string.format("Streak %d! +%d Stardust", result.Streak, result.Reward), "success")
+			track("DailyClaimed", { Streak = result.Streak, Reward = result.Reward })
+			refreshInventory()
 		else
 			toast("Daily unavailable: " .. tostring(result.Error), "warning")
 		end
 	end)
 end
 
-local function moveArrowTo(target)
-	if not tutorialArrow then
-		return
-	end
-	local absPos = target.AbsolutePosition
-	tutorialArrow.Position = UDim2.fromOffset(absPos.X + target.AbsoluteSize.X * 0.5 - 16, absPos.Y - 36)
-	tutorialArrow.Visible = true
+local function buildHabitatPanel()
+	local panel = makePanel("Habitat", "Habitat")
+	local level = make("TextLabel", {
+		Parent = panel,
+		Position = UDim2.fromOffset(16, 62),
+		Size = UDim2.new(1, -32, 0, 26),
+		BackgroundTransparency = 1,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Font = Enum.Font.GothamBold,
+		TextSize = 20,
+		TextColor3 = UIConfig.Theme.Text,
+		Text = "Habitat Lv. " .. tostring(state.HabitatLevel),
+	})
+
+	make("TextButton", {
+		Parent = panel,
+		Position = UDim2.fromOffset(16, 98),
+		Size = UDim2.fromOffset(190, 48),
+		BackgroundColor3 = UIConfig.Theme.Success,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamBold,
+		TextSize = 15,
+		TextColor3 = Color3.fromRGB(18, 47, 24),
+		Text = "Upgrade Habitat",
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) }).MouseButton1Click:Connect(function()
+		local result = UpgradeHabitat:InvokeServer()
+		if result.Ok then
+			state.HabitatLevel = result.Result
+			level.Text = "Habitat Lv. " .. tostring(state.HabitatLevel)
+			toast("Habitat upgraded!", "success")
+		else
+			toast("Upgrade failed: " .. tostring(result.Result), "warning")
+		end
+	end)
+
+	make("TextLabel", {
+		Parent = panel,
+		Position = UDim2.fromOffset(16, 154),
+		Size = UDim2.new(1, -32, 0, 50),
+		BackgroundTransparency = 1,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "Showcase pedestal uses your favorite creature from the Creatures panel.",
+		Font = Enum.Font.Gotham,
+		TextSize = 14,
+		TextColor3 = UIConfig.Theme.SubText,
+	})
 end
 
 local function runTutorial()
 	if state.TutorialDone then
-		objectiveLabel.Text = "🎯 Objective: Collect rare critters and flex your habitat!"
+		objectiveLabel.Text = "🎯 New goal: trade, visit habitats, and complete your collection!"
 		return
 	end
 
-	blockInput = true
-	toast("Welcome to Cosmic Critters! Let's learn fast.", "success")
-
-	local topBar = rootGui:FindFirstChild("TopBar")
-	local tutorialSteps = {
-		{ Text = "Move around and collect an energy crystal!", Wait = 4 },
-		{ Text = "Tap 'Open Crystals' below.", TargetPanel = "Crystals", Wait = 2 },
-		{ Text = "Open your first crystal now!", Wait = 6 },
-		{ Text = "Great! Now claim one quest reward.", TargetPanel = "Quests", Wait = 4 },
-		{ Text = "Upgrade your habitat one time.", TargetPanel = "Habitat", Wait = 4 },
+	track("TutorialStarted")
+	blockedInput = true
+	toast("Welcome! Quick tour starts now.", "success")
+	local steps = {
+		"Move around and collect energy.",
+		"Tap Crystals and open your first crystal.",
+		"Open Creatures and set one as your showcase favorite.",
+		"Claim one quest reward.",
+		"Open Social and visit a player habitat.",
 	}
-
-	for _, step in ipairs(tutorialSteps) do
-		objectiveLabel.Text = "🎯 " .. step.Text
-		if step.TargetPanel then
-			openPanel(step.TargetPanel)
-		end
-		if topBar then
-			moveArrowTo(topBar)
-		end
-		task.wait(step.Wait)
+	for i, text in ipairs(steps) do
+		objectiveLabel.Text = "🎯 " .. text
+		tutorialArrow.Visible = true
+		tutorialArrow.Position = UDim2.fromScale(0.5, 0.88)
+		task.wait(i == 2 and 7 or 4)
 	end
 
-	blockInput = false
 	state.TutorialDone = true
-	objectiveLabel.Text = "🎯 Next: open crystals, finish quests, and trade with friends!"
+	blockedInput = false
+	objectiveLabel.Text = "🎯 Keep collecting rare critters and flex your favorites!"
 	tutorialArrow.Visible = false
-	toast("Tutorial complete! Bonus +200 Stardust", "success")
-	state.Currencies.Stardust += 200
-	updateCurrencyHud()
+	state.Currencies.Stardust = (state.Currencies.Stardust or 0) + 250
+	updateHud()
+	toast("Tutorial complete! +250 Stardust", "success")
+	track("TutorialCompleted", { Bonus = 250 })
 end
 
-local function wireMarketplaceFeedback()
+local function wirePurchases()
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(_, productId, purchased)
 		if purchased then
 			playSfx("PurchaseSuccess")
-			toast("Purchase complete! Enjoy your boost.", "success")
+			toast("Purchase complete!", "success")
+			track("PurchaseSuccess", { ProductId = productId, Kind = "Product" })
 		else
+			playSfx("PurchaseCancel")
 			toast("Purchase canceled.", "warning")
+			track("PurchaseCancelled", { ProductId = productId, Kind = "Product" })
 		end
 	end)
 
@@ -873,83 +1060,82 @@ local function wireMarketplaceFeedback()
 		if purchased then
 			playSfx("PurchaseSuccess")
 			toast("Game pass unlocked!", "success")
+			track("PurchaseSuccess", { ProductId = passId, Kind = "Pass" })
 		else
+			playSfx("PurchaseCancel")
 			toast("Game pass purchase canceled.", "warning")
+			track("PurchaseCancelled", { ProductId = passId, Kind = "Pass" })
 		end
 	end)
 end
 
-local function buildUiShell()
+local function buildUi()
 	rootGui = make("ScreenGui", {
 		Name = "CosmicCrittersUI",
 		ResetOnSpawn = false,
-		IgnoreGuiInset = false,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 		Parent = playerGui,
-	})
-
-	make("UIScale", {
-		Parent = rootGui,
-		Scale = 1,
 	})
 
 	toastHolder = make("Frame", {
 		Parent = rootGui,
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.fromScale(0.5, 0.17),
-		Size = UDim2.new(0.72, 0, 0, 190),
+		Position = UDim2.fromScale(0.5, 0.16),
+		Size = UDim2.new(0.72, 0, 0, 170),
 		BackgroundTransparency = 1,
-	}, {
-		make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }),
-	})
+	}, { make("UIListLayout", { Padding = UDim.new(0, 6) }) })
 
 	tutorialArrow = make("TextLabel", {
 		Parent = rootGui,
 		Visible = false,
-		Size = UDim2.fromOffset(32, 32),
 		BackgroundTransparency = 1,
-		Text = "⬇",
-		TextColor3 = UIConfig.Theme.Warning,
+		Size = UDim2.fromOffset(34, 34),
 		Font = Enum.Font.GothamBlack,
 		TextSize = 30,
+		TextColor3 = UIConfig.Theme.Warning,
+		Text = "⬇",
 	})
 
 	buildHud()
-	buildMenuButtons()
-	createCrystalPanel()
-	createCollectionPanel()
-	createQuestPanel()
-	createShopPanel()
-	createTradePanel()
-	createHabitatPanel()
-	createDailyPanel()
-	wireMarketplaceFeedback()
+	buildTabs()
+	buildCrystalsPanel()
+	buildCreaturesPanel()
+	buildQuestPanel()
+	buildShopPanel()
+	buildTradePanel()
+	buildSocialPanel()
+	buildDailyPanel()
+	buildHabitatPanel()
+	wirePurchases()
 end
 
 DataReady.OnClientEvent:Connect(function(payload)
 	state.Currencies = payload.Currencies or state.Currencies
-	state.Quests = payload.Quests or {}
-	state.CreatureCount = payload.CreatureCount or 0
-	state.HabitatLevel = payload.HabitatLevel or 1
-	state.TutorialDone = state.CreatureCount > 0
+	state.Quests = payload.Quests or state.Quests
+	state.HabitatLevel = payload.HabitatLevel or state.HabitatLevel
+	state.Collection = payload.Collection or state.Collection
+	state.FavoriteCreatureId = payload.FavoriteCreatureId
+	state.TutorialDone = (payload.CreatureCount or 0) > 0
 
 	if not rootGui then
-		buildUiShell()
+		buildUi()
 	end
 
-	updateCurrencyHud()
+	refreshInventory()
+	refreshSocial()
+	updateHud()
+	track("SessionMilestone", { Stage = "DataReady" })
 	runTutorial()
 end)
 
 ServerAnnouncement.OnClientEvent:Connect(function(text)
 	playSfx("RareAnnouncement")
 	toast("🌟 " .. text, "success")
+	track("RareAnnouncementSeen", { Message = text })
 end)
 
--- Failsafe boot in Studio test if server payload arrives late.
 task.delay(10, function()
 	if not rootGui then
-		buildUiShell()
+		buildUi()
 		toast("Loading player data...", "warning")
 	end
 end)

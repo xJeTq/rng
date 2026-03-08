@@ -47,3 +47,12 @@
 - [ ] Full moderation/reporting UX and support tooling integration.
 - [ ] Device QA matrix sign-off (real low-end phones/tablets, not just Studio).
 - [ ] Creator Dashboard monetization IDs configured and purchase sandbox verified.
+
+## H) Phase 3 completed in code
+
+- [x] Visual trading flow with player roster + inventory picker + rarity badges + timer + confirm state.
+- [x] Social profile summaries and habitat visiting request flow.
+- [x] Favorite creature showcase wiring from inventory to habitat/social surfaces.
+- [x] Premium card hierarchy pass across quests/shop/trade/social panels.
+- [x] Centralized audio mapping with tier-based rarity reveal sounds and purchase/trade/daily cues.
+- [x] Soft-launch telemetry events for onboarding, first-time actions, trade/purchase funnels, and announcements.
