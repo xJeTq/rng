@@ -60,6 +60,7 @@ src/
    - `CreateTrade` (RemoteFunction)
    - `AcceptTrade` (RemoteFunction)
    - `UpgradeHabitat` (RemoteFunction)
+   - `ClaimQuest` (RemoteFunction)
    - `ServerAnnouncement` (RemoteEvent)
    - `DataReady` (RemoteEvent)
 
@@ -109,3 +110,33 @@ Then configure matching IDs in Roblox Creator Dashboard.
 - RNG is presented as collectible discovery from gameplay currency.
 - Paid products accelerate progression or add cosmetics; they do **not** directly sell random outcomes.
 - All critical economy logic remains server-authoritative.
+
+## Production Readiness (Current State)
+
+This repository is a **strong prototype scaffold**, but it is **not fully polished for immediate public launch** yet.
+
+Before publishing to a large audience, complete at least:
+
+- Full GUI implementation (inventory, trading UX, quests, shop confirmations)
+- Moderation-safe text filtering and reports for social surfaces
+- Comprehensive QA on live servers and mobile devices
+- Balancing pass for economy inflow/outflow and progression pacing
+- Event content pipeline (weekly events, limited creatures, admin tools)
+- End-to-end purchase testing with real product/game pass IDs
+
+## Launch Tickets Completed In This Repo
+
+- Server-side quest claim endpoint (`ClaimQuest`) with validation and reward payout
+- Daily quest reset based on UTC day (`QuestDay`)
+- Trade hardening (ownership checks, duplicate guard, self-trade block, 120s expiry)
+- Remote anti-spam rate limits added beyond crystal opens (daily, quests, trade, habitat)
+- Safer persistence with retry + `UpdateAsync`, plus `BindToClose` full-save flush
+- Economy hardening for crystal open costs and rollback on failure
+
+## Still Required Before A Polished Public Launch
+
+- Production UI/UX (inventory grids, trade confirmation flows, shop modal states, quest panel)
+- Full observability backend (persistent analytics export, dashboards, alerts)
+- Content ops tooling for weekly events / limited creatures / live balancing toggles
+- End-to-end platform QA: console/tablet coverage, reconnect/latency tests, purchase rollback tests
+- Safety systems: robust player report flow, moderation queues, abuse review tooling

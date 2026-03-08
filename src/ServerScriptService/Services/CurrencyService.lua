@@ -1,5 +1,6 @@
 local GameConfig = require(game.ReplicatedStorage.Config.GameConfig)
 local DataService = require(script.Parent.DataService)
+local QuestService = require(script.Parent.QuestService)
 
 local CurrencyService = {}
 
@@ -16,7 +17,16 @@ function CurrencyService.Add(player, currency, amount)
 	if not data then
 		return false
 	end
+
 	data.Currencies[currency] = (data.Currencies[currency] or 0) + amount
+	if data.Currencies[currency] < 0 then
+		data.Currencies[currency] = 0
+	end
+
+	if currency == GameConfig.Currencies.Stardust and amount > 0 then
+		QuestService.Progress(data, "EarnStardust", amount)
+	end
+
 	return true
 end
 
@@ -39,7 +49,10 @@ function CurrencyService.StartPassiveIncome(players)
 					for _, creature in ipairs(data.Creatures) do
 						rate += creature.Production or 0
 					end
-					CurrencyService.Add(player, GameConfig.Currencies.Stardust, rate)
+
+					if rate > 0 then
+						CurrencyService.Add(player, GameConfig.Currencies.Stardust, rate)
+					end
 				end
 			end
 		end

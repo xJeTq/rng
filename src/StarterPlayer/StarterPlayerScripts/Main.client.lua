@@ -7,6 +7,7 @@ local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local OpenCrystal = remotes:WaitForChild("OpenCrystal")
 local ClaimDailyReward = remotes:WaitForChild("ClaimDailyReward")
 local UpgradeHabitat = remotes:WaitForChild("UpgradeHabitat")
+local ClaimQuest = remotes:WaitForChild("ClaimQuest")
 local ServerAnnouncement = remotes:WaitForChild("ServerAnnouncement")
 local DataReady = remotes:WaitForChild("DataReady")
 
@@ -42,6 +43,16 @@ local function claimDaily()
 	end
 end
 
+
+local function claimQuest(questId)
+	local result = ClaimQuest:InvokeServer(questId)
+	if result.Ok then
+		toast(string.format("Quest claimed! +%d Stardust", result.Reward))
+	else
+		toast("Quest claim failed: " .. tostring(result.Error))
+	end
+end
+
 local function upgradeHabitat()
 	local result = UpgradeHabitat:InvokeServer()
 	if result.Ok then
@@ -64,3 +75,4 @@ end)
 task.delay(4, openBasicCrystal)
 task.delay(6, claimDaily)
 task.delay(8, upgradeHabitat)
+task.delay(10, function() claimQuest("Open3") end)

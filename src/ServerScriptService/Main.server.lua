@@ -35,6 +35,7 @@ local ClaimDailyReward = ensureRemote("ClaimDailyReward", "RemoteFunction")
 local CreateTrade = ensureRemote("CreateTrade", "RemoteFunction")
 local AcceptTrade = ensureRemote("AcceptTrade", "RemoteFunction")
 local UpgradeHabitat = ensureRemote("UpgradeHabitat", "RemoteFunction")
+local ClaimQuest = ensureRemote("ClaimQuest", "RemoteFunction")
 local ServerAnnouncement = ensureRemote("ServerAnnouncement", "RemoteEvent")
 local DataReady = ensureRemote("DataReady", "RemoteEvent")
 
@@ -71,7 +72,24 @@ local function syncLeaderstats(player)
 	leaderstats.Discovered.Value = #data.Creatures
 end
 
+local function ensureQuestState(data)
+	QuestService.EnsureDailyQuests(data)
+end
+
+local function getMaxCreatureSlots(player)
+	local base = GameConfig.Limits.BaseCreatureSlots
+	if MonetizationService.PlayerHasPass(player, "ExtraCreatureSlots") then
+		return base + 50
+	end
+	return base
+end
+
 local function grantCreature(player, data, rarity)
+	local maxSlots = getMaxCreatureSlots(player)
+	if #data.Creatures >= maxSlots then
+		return nil, nil, "CreatureStorageFull"
+	end
+
 	local pool = CreatureCatalog.ByRarity[rarity]
 	local creatureId = pool[math.random(1, #pool)]
 	local def = CreatureCatalog.Definitions[creatureId]
@@ -93,7 +111,7 @@ local function grantCreature(player, data, rarity)
 		ServerAnnouncement:FireAllClients(string.format("🌟 %s discovered a %s %s!", player.Name, string.upper(rarity), def.DisplayName))
 	end
 
-	return creatureId, def
+	return creatureId, def, nil
 end
 
 OpenCrystal.OnServerInvoke = function(player, crystalType)
@@ -105,13 +123,20 @@ OpenCrystal.OnServerInvoke = function(player, crystalType)
 	if not data then
 		return { Ok = false, Error = "NoData" }
 	end
+	ensureQuestState(data)
 
-	local crystal = GameConfig.Crystals[crystalType or "Basic"]
+	local selectedType = crystalType or "Basic"
+	local crystal = GameConfig.Crystals[selectedType]
 	if not crystal then
 		return { Ok = false, Error = "InvalidCrystal" }
 	end
 
+	if not CurrencyService.TrySpend(player, GameConfig.Currencies.Stardust, crystal.Cost) then
+		return { Ok = false, Error = "NotEnoughStardust" }
+	end
+
 	if not CurrencyService.TrySpend(player, GameConfig.Currencies.Energy, crystal.EnergyCost) then
+		CurrencyService.Add(player, GameConfig.Currencies.Stardust, crystal.Cost)
 		return { Ok = false, Error = "NotEnoughEnergy" }
 	end
 
@@ -122,10 +147,16 @@ OpenCrystal.OnServerInvoke = function(player, crystalType)
 		data.PityCount += 1
 	end
 
-	local creatureId, creatureDef = grantCreature(player, data, rarity)
+	local creatureId, creatureDef, grantError = grantCreature(player, data, rarity)
+	if grantError then
+		CurrencyService.Add(player, GameConfig.Currencies.Stardust, crystal.Cost)
+		CurrencyService.Add(player, GameConfig.Currencies.Energy, crystal.EnergyCost)
+		return { Ok = false, Error = grantError }
+	end
+
 	data.Stats.TotalOpens += 1
 	QuestService.Progress(data, "OpenCrystals", 1)
-	AnalyticsService.Track(player, "CrystalOpened", { Rarity = rarity, CrystalType = crystalType })
+	AnalyticsService.Track(player, "CrystalOpened", { Rarity = rarity, CrystalType = selectedType })
 	syncLeaderstats(player)
 
 	return {
@@ -138,10 +169,15 @@ OpenCrystal.OnServerInvoke = function(player, crystalType)
 end
 
 ClaimDailyReward.OnServerInvoke = function(player)
+	if not AntiExploitService.WithinRateLimit(player, "ClaimDailyReward", 1) then
+		return { Ok = false, Error = "RateLimited" }
+	end
+
 	local data = DataService.Get(player)
 	if not data then
 		return { Ok = false, Error = "NoData" }
 	end
+	ensureQuestState(data)
 
 	local day = math.floor(os.time() / 86400)
 	if data.Daily.LastClaimDay == day then
@@ -162,9 +198,40 @@ ClaimDailyReward.OnServerInvoke = function(player)
 	return { Ok = true, Reward = reward, Streak = data.Daily.Streak }
 end
 
+ClaimQuest.OnServerInvoke = function(player, questId)
+	if not AntiExploitService.WithinRateLimit(player, "ClaimQuest", 0.5) then
+		return { Ok = false, Error = "RateLimited" }
+	end
+	if typeof(questId) ~= "string" then
+		return { Ok = false, Error = "BadRequest" }
+	end
+
+	local data = DataService.Get(player)
+	if not data then
+		return { Ok = false, Error = "NoData" }
+	end
+	ensureQuestState(data)
+
+	local ok, result, reward = QuestService.Claim(data, questId)
+	if not ok then
+		return { Ok = false, Error = result }
+	end
+
+	CurrencyService.Add(player, GameConfig.Currencies.Stardust, reward)
+	syncLeaderstats(player)
+	return { Ok = true, Reward = reward }
+end
+
 CreateTrade.OnServerInvoke = function(player, targetUserId, offeredCreatureIds)
+	if not AntiExploitService.WithinRateLimit(player, "CreateTrade", 0.5) then
+		return { Ok = false, Error = "RateLimited" }
+	end
 	if typeof(targetUserId) ~= "number" or typeof(offeredCreatureIds) ~= "table" then
 		return { Ok = false, Error = "BadRequest" }
+	end
+
+	if #offeredCreatureIds > GameConfig.Limits.MaxTradeSlots then
+		return { Ok = false, Error = "TooManyTradeItems" }
 	end
 
 	local targetPlayer = Players:GetPlayerByUserId(targetUserId)
@@ -181,11 +248,29 @@ CreateTrade.OnServerInvoke = function(player, targetUserId, offeredCreatureIds)
 end
 
 AcceptTrade.OnServerInvoke = function(player, tradeId)
+	if not AntiExploitService.WithinRateLimit(player, "AcceptTrade", 0.5) then
+		return { Ok = false, Error = "RateLimited" }
+	end
+	if typeof(tradeId) ~= "number" then
+		return { Ok = false, Error = "BadRequest" }
+	end
+
 	local ok, result = TradingService.AcceptTrade(player, tradeId)
+	if ok then
+		syncLeaderstats(player)
+		local target = Players:GetPlayerByUserId(result.InitiatorUserId)
+		if target then
+			syncLeaderstats(target)
+		end
+	end
 	return { Ok = ok, Result = result }
 end
 
 UpgradeHabitat.OnServerInvoke = function(player)
+	if not AntiExploitService.WithinRateLimit(player, "UpgradeHabitat", 0.5) then
+		return { Ok = false, Error = "RateLimited" }
+	end
+
 	local ok, result = HabitatService.Upgrade(player)
 	if ok then
 		syncLeaderstats(player)
@@ -195,18 +280,24 @@ end
 
 Players.PlayerAdded:Connect(function(player)
 	local data = DataService.Load(player)
-	QuestService.EnsureDailyQuests(data)
+	ensureQuestState(data)
 	createLeaderstats(player, data)
 	DataReady:FireClient(player, {
 		Currencies = data.Currencies,
 		CreatureCount = #data.Creatures,
 		HabitatLevel = data.Habitat.Level,
+		Quests = data.Quests,
 	})
 end)
 
 Players.PlayerRemoving:Connect(function(player)
 	DataService.Save(player)
 	DataService.Remove(player)
+end)
+
+game:BindToClose(function()
+	DataService.SaveAll()
+	task.wait(2)
 end)
 
 DataService.StartAutoSave(60)
