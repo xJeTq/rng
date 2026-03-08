@@ -46,6 +46,7 @@ local GetCreatureInventory = ensureRemote("GetCreatureInventory", "RemoteFunctio
 local SetFavoriteCreature = ensureRemote("SetFavoriteCreature", "RemoteFunction")
 local VisitHabitat = ensureRemote("VisitHabitat", "RemoteFunction")
 local TrackClientEvent = ensureRemote("TrackClientEvent", "RemoteFunction")
+local ReportPlayer = ensureRemote("ReportPlayer", "RemoteFunction")
 
 local ServerAnnouncement = ensureRemote("ServerAnnouncement", "RemoteEvent")
 local DataReady = ensureRemote("DataReady", "RemoteEvent")
@@ -331,7 +332,7 @@ ClaimDailyReward.OnServerInvoke = function(player)
 	end
 
 	data.Daily.LastClaimDay = day
-	local reward = 100 + (data.Daily.Streak * 25)
+	local reward = 140 + (data.Daily.Streak * 30)
 	CurrencyService.Add(player, GameConfig.Currencies.Stardust, reward)
 	AnalyticsService.Track(player, "DailyRewardClaimed", { Streak = data.Daily.Streak, Reward = reward })
 	syncLeaderstats(player)
@@ -457,6 +458,44 @@ TrackClientEvent.OnServerInvoke = function(player, eventName, payload)
 		payload = {}
 	end
 	AnalyticsService.Track(player, "Client_" .. eventName, payload)
+	return { Ok = true }
+end
+
+
+ReportPlayer.OnServerInvoke = function(player, targetUserId, category, context, details)
+	if not AntiExploitService.WithinRateLimit(player, "ReportPlayer", 4) then
+		return { Ok = false, Error = "RateLimited" }
+	end
+	if typeof(targetUserId) ~= "number" then
+		return { Ok = false, Error = "BadRequest" }
+	end
+	if typeof(category) ~= "string" then
+		return { Ok = false, Error = "BadCategory" }
+	end
+
+	local validCategories = { Scam = true, Bully = true, BadWords = true, Inappropriate = true, Other = true }
+	if not validCategories[category] then
+		return { Ok = false, Error = "InvalidCategory" }
+	end
+
+	if typeof(context) ~= "string" then
+		context = "Unknown"
+	end
+	if typeof(details) ~= "string" then
+		details = ""
+	end
+
+	if #details > 140 then
+		details = string.sub(details, 1, 140)
+	end
+
+	AnalyticsService.Track(player, "PlayerReported", {
+		TargetUserId = targetUserId,
+		Category = category,
+		Context = context,
+		Details = details,
+	})
+
 	return { Ok = true }
 end
 

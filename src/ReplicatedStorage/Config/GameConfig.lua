@@ -6,14 +6,14 @@ GameConfig.Currencies = {
 }
 
 GameConfig.Crystals = {
-	Basic = { Cost = 100, EnergyCost = 1 },
-	Nova = { Cost = 1000, EnergyCost = 3 },
-	Nebula = { Cost = 5000, EnergyCost = 5 },
+	Basic = { Cost = 75, EnergyCost = 1 },
+	Nova = { Cost = 500, EnergyCost = 3 },
+	Nebula = { Cost = 2600, EnergyCost = 5 },
 }
 
 GameConfig.Production = {
-	TickSeconds = 5,
-	BaseStardustPerTick = 5,
+	TickSeconds = 4,
+	BaseStardustPerTick = 6,
 }
 
 GameConfig.Monetization = {
@@ -36,6 +36,10 @@ GameConfig.Monetization = {
 GameConfig.Limits = {
 	MaxTradeSlots = 6,
 	BaseCreatureSlots = 50,
+}
+
+GameConfig.Moderation = {
+	ReportCategories = { "Scam", "Bully", "BadWords", "Inappropriate", "Other" },
 }
 
 return GameConfig

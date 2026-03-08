@@ -48,3 +48,17 @@
 
 - [ ] Simulated high ping does not break crystal/trade claim flows.
 - [ ] Rapid tapping stays rate-limited with stable client messaging.
+
+## Moderation / reporting
+
+- [ ] Report flow works from Social cards.
+- [ ] Report flow works from Trade panel target reporting.
+- [ ] Report category validation and anti-spam messaging behave correctly.
+- [ ] Local block hides blocked players from social list in-session.
+
+## Edge-case stabilization
+
+- [ ] Reconnect during/after habitat visit resets UI state safely.
+- [ ] Favorite creature removed/desynced path resets favorite without errors.
+- [ ] Network failure during remote calls returns friendly messaging (no hard client errors).
+- [ ] Trade local cancel clears pending state and prevents accidental confirm spam.

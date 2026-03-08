@@ -12,8 +12,8 @@ function MonetizationService.ProcessReceipt(receiptInfo)
 
 	local products = GameConfig.Monetization.DeveloperProducts
 	if receiptInfo.ProductId == products.CrystalBundle then
-		CurrencyService.Add(player, "Stardust", 5000)
-		CurrencyService.Add(player, "Energy", 25)
+		CurrencyService.Add(player, "Stardust", 7500)
+		CurrencyService.Add(player, "Energy", 40)
 	elseif receiptInfo.ProductId == products.EnergyRefill then
 		CurrencyService.Add(player, "Energy", 50)
 	elseif receiptInfo.ProductId == products.HabitatUpgrade then

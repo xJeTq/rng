@@ -7,7 +7,7 @@ local DATASTORE_NAME = "CosmicCritters_PlayerData_v1"
 local SAVE_RETRIES = 3
 
 local defaultData = {
-	Currencies = { Stardust = 250, Energy = 10 },
+	Currencies = { Stardust = 450, Energy = 12 },
 	Creatures = {},
 	EquippedCreatureId = nil,
 	FavoriteCreatureId = nil,

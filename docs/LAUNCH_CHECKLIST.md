@@ -64,3 +64,26 @@
 - [x] Favorite creature showcase pedestal labels update from live profile data.
 - [x] Asset replacement structure added (`AssetCatalog.lua`) for final art/audio swaps.
 - [x] Low-end fallback mode added for reduced client feedback load.
+
+## J) Final stabilization completed in code
+
+- [x] Moderation/reporting UX integrated into social and trade contexts.
+- [x] Server-side report intake with category validation + anti-spam rate limiting.
+- [x] Edge-case hardening for network failures, reconnect panel state reset, trade local cancel, and favorite desync handling.
+- [x] Economy balance pass for first-session progression and first-10-minute cadence.
+
+## K) Exact soft-launch checklist (must pass)
+
+- [ ] All product/game pass IDs set in `GameConfig.lua` and verified in private server.
+- [ ] Moderation report flow tested across Social and Trade contexts.
+- [ ] Device matrix smoke pass complete (phone/tablet/PC + low-end quality mode).
+- [ ] Telemetry sampling reviewed for tutorial, trade funnel, purchase funnel, and rarity drops.
+- [ ] Economy pacing signoff from first 10-minute test script.
+
+## L) Exact public-launch checklist (must pass)
+
+- [ ] Final art pack swapped through `AssetCatalog.lua` and visual QA approved.
+- [ ] Final audio ID swap and loudness normalization approved.
+- [ ] Full regression QA (reconnect, bad network, purchases, trading expiry, moderation).
+- [ ] Moderation triage playbook and on-call owner assigned.
+- [ ] Go/no-go review signed with risk log and rollback plan.

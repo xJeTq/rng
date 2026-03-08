@@ -1,8 +1,8 @@
 local QuestService = {}
 
 local DAILY_QUESTS = {
-	{ Id = "Open3", Type = "OpenCrystals", Goal = 3, Reward = 100 },
-	{ Id = "Earn500", Type = "EarnStardust", Goal = 500, Reward = 150 },
+	{ Id = "Open3", Type = "OpenCrystals", Goal = 3, Reward = 160 },
+	{ Id = "Earn400", Type = "EarnStardust", Goal = 400, Reward = 220 },
 }
 
 local function getCurrentDay()

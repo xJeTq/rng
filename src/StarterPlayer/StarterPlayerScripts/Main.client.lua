@@ -25,6 +25,7 @@ local GetCreatureInventory = remotes:WaitForChild("GetCreatureInventory")
 local SetFavoriteCreature = remotes:WaitForChild("SetFavoriteCreature")
 local VisitHabitat = remotes:WaitForChild("VisitHabitat")
 local TrackClientEvent = remotes:WaitForChild("TrackClientEvent")
+local ReportPlayer = remotes:WaitForChild("ReportPlayer")
 
 local ServerAnnouncement = remotes:WaitForChild("ServerAnnouncement")
 local DataReady = remotes:WaitForChild("DataReady")
@@ -47,6 +48,7 @@ local state = {
 		ExpireAt = 0,
 		Locked = false,
 	},
+	BlockedUsers = {},
 	Milestones = {
 		FirstCrystalOpened = false,
 		FirstQuestClaimed = false,
@@ -65,6 +67,8 @@ local collectionLabel
 local tutorialArrow
 local blockedInput = false
 local lowEndMode = false
+local panelSwitchLockedUntil = 0
+local openReportDialog
 
 local function make(className, props, children)
 	local obj = Instance.new(className)
@@ -90,9 +94,23 @@ local function detectLowEndMode()
 	end
 end
 
+
+local function safeInvoke(remote, ...)
+	local ok, result = pcall(function()
+		return remote:InvokeServer(...)
+	end)
+	if not ok then
+		return { Ok = false, Error = "NetworkError" }
+	end
+	if typeof(result) ~= "table" then
+		return { Ok = false, Error = "BadResponse" }
+	end
+	return result
+end
+
 local function track(eventName, payload)
 	pcall(function()
-		TrackClientEvent:InvokeServer(eventName, payload or {})
+		safeInvoke(TrackClientEvent, eventName, payload or {})
 	end)
 end
 
@@ -196,6 +214,10 @@ local function openPanel(key)
 	if blockedInput then
 		return
 	end
+	if os.clock() < panelSwitchLockedUntil then
+		return
+	end
+	panelSwitchLockedUntil = os.clock() + 0.08
 	if state.ActivePanel == key then
 		closeAllPanels()
 		return
@@ -258,19 +280,31 @@ local function makePanel(name, title)
 end
 
 local function refreshInventory()
-	local res = GetCreatureInventory:InvokeServer()
+	local res = safeInvoke(GetCreatureInventory)
 	if res.Ok then
 		state.Creatures = res.Creatures
 		state.FavoriteCreatureId = res.FavoriteCreatureId
 		state.Collection = res.Collection
+		if state.FavoriteCreatureId then
+			local found = false
+			for _, c in ipairs(state.Creatures) do
+				if c.Id == state.FavoriteCreatureId then found = true break end
+			end
+			if not found then
+				state.FavoriteCreatureId = nil
+				track("FavoriteCreatureDesynced")
+			end
+		end
 		updateHud()
 	end
 end
 
 local function refreshSocial()
-	local res = GetSocialSnapshot:InvokeServer()
+	local res = safeInvoke(GetSocialSnapshot)
 	if res.Ok then
 		state.SocialPlayers = res.Players
+	else
+		toast("Social list unavailable. Check connection.", "warning")
 	end
 end
 
@@ -401,6 +435,9 @@ end
 
 local function buildTabs()
 	local _icons = AssetCatalog.UI.Icons
+	if not _icons then
+		track("AssetFallbackUsed", { Area = "Tabs" })
+	end
 	local tabs = make("Frame", {
 		Parent = rootGui,
 		AnchorPoint = Vector2.new(0.5, 1),
@@ -461,7 +498,7 @@ local function buildCrystalsPanel()
 			TextColor3 = Color3.fromRGB(13, 27, 47),
 			Text = string.format("%s\n✨%d  🔋%d", crystalType, cfg.Cost, cfg.EnergyCost),
 		}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) }).MouseButton1Click:Connect(function()
-			local result = OpenCrystal:InvokeServer(crystalType)
+			local result = safeInvoke(OpenCrystal, crystalType)
 			if result.Ok then
 				if not state.Milestones.FirstCrystalOpened then
 					state.Milestones.FirstCrystalOpened = true
@@ -543,7 +580,7 @@ local function buildCreaturesPanel()
 				TextColor3 = Color3.fromRGB(53, 35, 9),
 				Text = favText,
 			}, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) }).MouseButton1Click:Connect(function()
-				local result = SetFavoriteCreature:InvokeServer(creature.Id)
+				local result = safeInvoke(SetFavoriteCreature, creature.Id)
 				if result.Ok then
 					state.FavoriteCreatureId = creature.Id
 					if not state.Milestones.FirstCreatureEquipped then
@@ -556,6 +593,7 @@ local function buildCreaturesPanel()
 					toast("Could not set favorite.", "warning")
 				end
 			end)
+			end
 		end
 	end
 
@@ -618,7 +656,7 @@ local function buildQuestPanel()
 			}, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
 			claim.Active = not quest.Claimed
 			claim.MouseButton1Click:Connect(function()
-				local result = ClaimQuest:InvokeServer(quest.Id)
+				local result = safeInvoke(ClaimQuest, quest.Id)
 				if result.Ok then
 					playSfx("QuestComplete")
 					if not state.Milestones.FirstQuestClaimed then
@@ -769,6 +807,8 @@ local function buildTradePanel()
 
 	local sendButton = make("TextButton", { Parent = right, Position = UDim2.new(0, 10, 1, -46), Size = UDim2.fromOffset(148, 36), BackgroundColor3 = UIConfig.Theme.Primary, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Color3.fromRGB(8, 21, 38), Text = "Send Request" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) })
 	local confirmButton = make("TextButton", { Parent = right, Position = UDim2.new(0, 164, 1, -46), Size = UDim2.fromOffset(148, 36), BackgroundColor3 = UIConfig.Theme.Success, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Color3.fromRGB(19, 46, 24), Text = "Confirm Trade" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) })
+	local cancelButton = make("TextButton", { Parent = right, Position = UDim2.new(0, 318, 1, -46), Size = UDim2.fromOffset(94, 36), BackgroundColor3 = UIConfig.Theme.Danger, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = UIConfig.Theme.Text, Text = "Cancel" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) })
+	local reportButton = make("TextButton", { Parent = right, Position = UDim2.new(1, -110, 0, 8), Size = UDim2.fromOffset(96, 24), BackgroundColor3 = UIConfig.Theme.Warning, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = Color3.fromRGB(55, 36, 8), Text = "Report Target" }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
 	make("TextLabel", { Parent = right, Position = UDim2.new(0, 320, 1, -44), Size = UDim2.new(1, -328, 0, 36), BackgroundTransparency = 1, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = UIConfig.Theme.Warning, Text = "Safety: Always double-check names and rarity before confirm." })
 
 	local function renderOfferList()
@@ -812,12 +852,14 @@ local function buildTradePanel()
 	local function renderPlayers()
 		for _, ch in ipairs(playerList:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
 		for _, pinfo in ipairs(state.SocialPlayers) do
-			local row = make("Frame", { Parent = playerList, Size = UDim2.new(1, -4, 0, 44), BackgroundColor3 = UIConfig.Theme.Panel, BorderSizePixel = 0 }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
+			if not (state.BlockedUsers and state.BlockedUsers[pinfo.UserId]) then
+				local row = make("Frame", { Parent = playerList, Size = UDim2.new(1, -4, 0, 44), BackgroundColor3 = UIConfig.Theme.Panel, BorderSizePixel = 0 }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
 			make("TextLabel", { Parent = row, Position = UDim2.fromOffset(8, 6), Size = UDim2.new(1, -82, 0, 32), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = UIConfig.Theme.Text, Text = string.format("%s  (%d%%)", pinfo.DisplayName, pinfo.CollectionPercent) })
 			make("TextButton", { Parent = row, Position = UDim2.new(1, -70, 0.5, -14), Size = UDim2.fromOffset(62, 28), BackgroundColor3 = UIConfig.Theme.Primary, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = Color3.fromRGB(9, 21, 37), Text = "Select" }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) }).MouseButton1Click:Connect(function()
 				state.Trade.Target = pinfo
 				statusLabel.Text = "Target: " .. pinfo.DisplayName .. " • choose creatures"
 			end)
+			end
 		end
 	end
 
@@ -837,7 +879,7 @@ local function buildTradePanel()
 		state.Trade.Locked = true
 		local ids = {}
 		for _, c in ipairs(state.Trade.Offer) do table.insert(ids, c.Id) end
-		local res = CreateTrade:InvokeServer(state.Trade.Target.UserId, ids)
+		local res = safeInvoke(CreateTrade, state.Trade.Target.UserId, ids)
 		state.Trade.Locked = false
 		if res.Ok then
 			state.Trade.TradeId = res.TradeId
@@ -852,6 +894,21 @@ local function buildTradePanel()
 		end
 	end)
 
+	cancelButton.MouseButton1Click:Connect(function()
+		state.Trade = { Stage = "idle", Target = nil, TradeId = nil, Offer = {}, ExpireAt = 0, Locked = false }
+		statusLabel.Text = "Trade canceled locally."
+		renderOfferList()
+		track("TradeCancelledLocal")
+	end)
+
+	reportButton.MouseButton1Click:Connect(function()
+		if not state.Trade.Target then
+			toast("Select a target first.", "warning")
+			return
+		end
+		openReportDialog(state.Trade.Target.UserId, state.Trade.Target.DisplayName, "Trade")
+	end)
+
 	confirmButton.MouseButton1Click:Connect(function()
 		if not state.Trade.TradeId then
 			toast("No active trade request.", "warning")
@@ -863,7 +920,7 @@ local function buildTradePanel()
 			state.Trade.TradeId = nil
 			return
 		end
-		local res = AcceptTrade:InvokeServer(state.Trade.TradeId)
+		local res = safeInvoke(AcceptTrade, state.Trade.TradeId)
 		if res.Ok then
 			track("TradeCompleted", { TradeId = state.Trade.TradeId })
 			toast("Trade completed!", "success")
@@ -905,6 +962,39 @@ local function buildTradePanel()
 	end)
 end
 
+
+openReportDialog = function(targetUserId, targetName, context)
+	local modal = make("Frame", {
+		Parent = rootGui,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(360, 280),
+		BackgroundColor3 = UIConfig.Theme.Panel,
+		BorderSizePixel = 0,
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 12) }) })
+	make("TextLabel", { Parent = modal, Position = UDim2.fromOffset(12, 10), Size = UDim2.new(1, -24, 0, 28), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = UIConfig.Theme.Text, Text = "Report " .. targetName })
+	local note = make("TextLabel", { Parent = modal, Position = UDim2.fromOffset(12, 36), Size = UDim2.new(1, -24, 0, 22), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = UIConfig.Theme.SubText, Text = "Help keep Cosmic Critters friendly." })
+	local selected = "Scam"
+	local categories = GameConfig.Moderation and GameConfig.Moderation.ReportCategories or { "Scam", "Bully", "BadWords", "Inappropriate", "Other" }
+	local list = make("Frame", { Parent = modal, Position = UDim2.fromOffset(12, 64), Size = UDim2.new(1, -24, 0, 132), BackgroundTransparency = 1 }, { make("UIListLayout", { Padding = UDim.new(0, 6) }) })
+	for _, category in ipairs(categories) do
+		local b = make("TextButton", { Parent = list, Size = UDim2.new(1, 0, 0, 22), BackgroundColor3 = UIConfig.Theme.PanelSoft, BorderSizePixel = 0, Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = UIConfig.Theme.Text, Text = category }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
+		b.MouseButton1Click:Connect(function() selected = category; note.Text = "Selected: " .. category end)
+	end
+	local details = make("TextBox", { Parent = modal, Position = UDim2.fromOffset(12, 200), Size = UDim2.new(1, -24, 0, 32), BackgroundColor3 = UIConfig.Theme.PanelSoft, BorderSizePixel = 0, PlaceholderText = "Optional details", Text = "", Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = UIConfig.Theme.Text }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) })
+	make("TextButton", { Parent = modal, Position = UDim2.new(0, 12, 1, -40), Size = UDim2.fromOffset(146, 30), BackgroundColor3 = UIConfig.Theme.Danger, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = UIConfig.Theme.Text, Text = "Cancel" }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) }).MouseButton1Click:Connect(function() modal:Destroy() end)
+	make("TextButton", { Parent = modal, Position = UDim2.new(1, -158, 1, -40), Size = UDim2.fromOffset(146, 30), BackgroundColor3 = UIConfig.Theme.Warning, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Color3.fromRGB(55, 34, 8), Text = "Send Report" }, { make("UICorner", { CornerRadius = UDim.new(0, 8) }) }).MouseButton1Click:Connect(function()
+		local result = safeInvoke(ReportPlayer, targetUserId, selected, context, details.Text)
+		if result.Ok then
+			toast("Report sent. Thanks for helping!", "success")
+			track("ReportSubmitted", { Category = selected, Context = context, TargetUserId = targetUserId })
+			modal:Destroy()
+		else
+			toast("Could not send report: " .. tostring(result.Error), "warning")
+		end
+	end)
+end
+
 local function buildSocialPanel()
 	local panel = makePanel("Social", "Social & Visits")
 	local list = make("ScrollingFrame", {
@@ -921,7 +1011,8 @@ local function buildSocialPanel()
 	local function render()
 		for _, ch in ipairs(list:GetChildren()) do if ch:IsA("Frame") then ch:Destroy() end end
 		for _, pinfo in ipairs(state.SocialPlayers) do
-			local card = make("Frame", {
+			if not (state.BlockedUsers and state.BlockedUsers[pinfo.UserId]) then
+				local card = make("Frame", {
 				Parent = list,
 				Size = UDim2.new(1, -4, 0, 88),
 				BackgroundColor3 = UIConfig.Theme.PanelSoft,
@@ -931,7 +1022,7 @@ local function buildSocialPanel()
 			make("TextLabel", { Parent = card, Position = UDim2.fromOffset(10, 34), Size = UDim2.new(1, -120, 0, 20), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = rarityColor(pinfo.RarestTier), Text = "Rarest: " .. pinfo.RarestTier })
 			make("TextLabel", { Parent = card, Position = UDim2.fromOffset(10, 54), Size = UDim2.new(1, -120, 0, 22), BackgroundTransparency = 1, TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = UIConfig.Theme.SubText, Text = string.format("Collection %d/%d (%d%%) • Habitat Lv.%d", pinfo.CollectionUnlocked, pinfo.CollectionTotal, pinfo.CollectionPercent, pinfo.HabitatLevel) })
 			make("TextButton", { Parent = card, Position = UDim2.new(1, -102, 0.5, -16), Size = UDim2.fromOffset(92, 32), BackgroundColor3 = UIConfig.Theme.Primary, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Color3.fromRGB(10, 24, 40), Text = "Visit" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) }).MouseButton1Click:Connect(function()
-				local result = VisitHabitat:InvokeServer(pinfo.UserId)
+				local result = safeInvoke(VisitHabitat, pinfo.UserId)
 				if result.Ok then
 					if result.VisitPoint and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
 						local pos = Vector3.new(result.VisitPoint.X, result.VisitPoint.Y, result.VisitPoint.Z)
@@ -942,6 +1033,15 @@ local function buildSocialPanel()
 				else
 					toast("Could not visit: " .. tostring(result.Error), "warning")
 				end
+			end)
+			make("TextButton", { Parent = card, Position = UDim2.new(1, -196, 0.5, -16), Size = UDim2.fromOffset(86, 32), BackgroundColor3 = UIConfig.Theme.Warning, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Color3.fromRGB(58, 40, 12), Text = "Report" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) }).MouseButton1Click:Connect(function()
+				openReportDialog(pinfo.UserId, pinfo.DisplayName, "Social")
+			end)
+			make("TextButton", { Parent = card, Position = UDim2.new(1, -290, 0.5, -16), Size = UDim2.fromOffset(86, 32), BackgroundColor3 = UIConfig.Theme.Panel, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = UIConfig.Theme.Text, Text = "Block" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) }).MouseButton1Click:Connect(function()
+				state.BlockedUsers = state.BlockedUsers or {}
+				state.BlockedUsers[pinfo.UserId] = true
+				toast("Blocked locally: " .. pinfo.DisplayName, "warning")
+				track("PlayerBlockedLocal", { TargetUserId = pinfo.UserId })
 			end)
 		end
 	end
@@ -975,7 +1075,7 @@ local function buildDailyPanel()
 		TextColor3 = Color3.fromRGB(64, 42, 9),
 		Text = "Claim Daily ✨",
 	}, { make("UICorner", { CornerRadius = UDim.new(0, 14) }) }).MouseButton1Click:Connect(function()
-		local result = ClaimDailyReward:InvokeServer()
+		local result = safeInvoke(ClaimDailyReward)
 		if result.Ok then
 			playSfx("DailyClaim")
 			toast(string.format("Streak %d! +%d Stardust", result.Streak, result.Reward), "success")
@@ -1012,7 +1112,7 @@ local function buildHabitatPanel()
 		TextColor3 = Color3.fromRGB(18, 47, 24),
 		Text = "Upgrade Habitat",
 	}, { make("UICorner", { CornerRadius = UDim.new(0, 10) }) }).MouseButton1Click:Connect(function()
-		local result = UpgradeHabitat:InvokeServer()
+		local result = safeInvoke(UpgradeHabitat)
 		if result.Ok then
 			state.HabitatLevel = result.Result
 			level.Text = "Habitat Lv. " .. tostring(state.HabitatLevel)
@@ -1151,6 +1251,9 @@ DataReady.OnClientEvent:Connect(function(payload)
 		buildUi()
 	end
 
+	blockedInput = false
+	state.Trade = { Stage = "idle", Target = nil, TradeId = nil, Offer = {}, ExpireAt = 0, Locked = false }
+	closeAllPanels()
 	refreshInventory()
 	refreshSocial()
 	updateHud()

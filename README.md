@@ -67,6 +67,7 @@ src/
    - `SetFavoriteCreature` (RemoteFunction)
    - `VisitHabitat` (RemoteFunction)
    - `TrackClientEvent` (RemoteFunction)
+   - `ReportPlayer` (RemoteFunction)
    - `ServerAnnouncement` (RemoteEvent)
    - `DataReady` (RemoteEvent)
 
@@ -170,3 +171,11 @@ Before publishing to a large audience, complete at least:
 - Favorite creature updates now refresh the in-world showcase pedestal text.
 - Added `AssetCatalog.lua` for final art/audio replacement structure and swap guidance.
 - Added low-end mode detection and lighter client feedback behavior for low graphics quality devices.
+
+## Final Stabilization Pass Added
+
+- Added moderation/reporting UX hooks for social and trade contexts (report categories, anti-spam, success/failure feedback).
+- Hardened client remote calls with safe invoke wrappers and improved network-failure messaging on key flows.
+- Added local block flow in social UI to reduce repeat exposure during play sessions.
+- Tuned early economy progression (starting resources, crystal costs, base passive gain, quest and daily pacing, starter bundle value).
+- Updated launch docs with exact soft-launch vs public-launch manual tasks and remaining risks.

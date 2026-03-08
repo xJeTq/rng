@@ -2,18 +2,18 @@
 
 ## Current classification
 
-The game is **nearly polished public-launch ready**, pending final content+QA signoff.
+The game is **polished soft-launch ready**, not fully polished public-launch ready.
 
 ## Top blockers
 
-1. **Final art pack swap**: replace placeholder-safe icon/frame assets with production-approved art export set via `AssetCatalog.lua`.
-2. **Final audio content/mastering**: replace placeholder SFX IDs and finalize loudness mix across devices.
-3. **Full QA signoff sweep**: complete cross-device, reconnect, and unstable-network regression matrix.
-4. **Live economy tuning round**: run telemetry-informed balancing pass on crystal costs, reward pacing, and progression friction.
-5. **Moderation/reporting UX completion**: integrate final report/review workflows for social surfaces before public scale.
+1. **Final art swap execution**: replace placeholder visual assets via `AssetCatalog.lua` and run visual regression review.
+2. **Final audio replacement + mastering**: swap approved SFX/music IDs and complete platform loudness QA.
+3. **Full public-launch QA regression**: complete expanded reconnect/network/purchase/trade/moderation matrix across devices.
+4. **Moderation operations readiness**: finalize triage workflow, response ownership, and escalation policy for reports.
+5. **Post-soft-launch balance retune**: run first telemetry-informed tuning cycle after live cohort data.
 
-## Minor known issues
+## Known risks to monitor
 
-- Inbound trade popup can be further enhanced with richer avatar portraits and multi-step trust confirmations.
-- Habitat visiting camera choreography can be upgraded with optional cinematic tween after teleport.
-- Product card sale windows can be wired to live-ops config for timed themes/events.
+- Trade/social report volume spikes may require stricter cooldowns or batching.
+- Habitat visit teleport points depend on world layout and should be verified after final map art pass.
+- Economy pacing may shift after final art/audio excitement tuning and should be re-baselined.
