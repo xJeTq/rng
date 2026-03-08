@@ -8,6 +8,7 @@ local RunService = game:GetService("RunService")
 
 local GameConfig = require(ReplicatedStorage.Config.GameConfig)
 local UIConfig = require(ReplicatedStorage.Config.UIConfig)
+local AssetCatalog = require(ReplicatedStorage.Config.AssetCatalog)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -63,6 +64,7 @@ local energyLabel
 local collectionLabel
 local tutorialArrow
 local blockedInput = false
+local lowEndMode = false
 
 local function make(className, props, children)
 	local obj = Instance.new(className)
@@ -73,6 +75,19 @@ local function make(className, props, children)
 		child.Parent = obj
 	end
 	return obj
+end
+
+
+local function detectLowEndMode()
+	local ok, gameSettings = pcall(function()
+		return UserSettings():GetService("UserGameSettings")
+	end)
+	if ok and gameSettings then
+		local quality = tostring(gameSettings.SavedQualityLevel)
+		if quality == "QualityLevel1" or quality == "QualityLevel2" or quality == "QualityLevel3" then
+			lowEndMode = true
+		end
+	end
 end
 
 local function track(eventName, payload)
@@ -260,6 +275,12 @@ local function refreshSocial()
 end
 
 local function rarityReveal(rarity, creatureName)
+	if lowEndMode then
+		playRaritySfx(rarity)
+		toast(string.format("%s! %s", rarity, creatureName), "success")
+		return
+	end
+
 	local overlay = make("Frame", {
 		Parent = rootGui,
 		Size = UDim2.fromScale(1, 1),
@@ -379,6 +400,7 @@ local function buildHud()
 end
 
 local function buildTabs()
+	local _icons = AssetCatalog.UI.Icons
 	local tabs = make("Frame", {
 		Parent = rootGui,
 		AnchorPoint = Vector2.new(0.5, 1),
@@ -911,6 +933,10 @@ local function buildSocialPanel()
 			make("TextButton", { Parent = card, Position = UDim2.new(1, -102, 0.5, -16), Size = UDim2.fromOffset(92, 32), BackgroundColor3 = UIConfig.Theme.Primary, BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = Color3.fromRGB(10, 24, 40), Text = "Visit" }, { make("UICorner", { CornerRadius = UDim.new(0, 9) }) }).MouseButton1Click:Connect(function()
 				local result = VisitHabitat:InvokeServer(pinfo.UserId)
 				if result.Ok then
+					if result.VisitPoint and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+						local pos = Vector3.new(result.VisitPoint.X, result.VisitPoint.Y, result.VisitPoint.Z)
+						player.Character.HumanoidRootPart.CFrame = CFrame.new(pos)
+					end
 					toast("Visiting " .. result.Target.DisplayName .. "'s habitat!", "success")
 					track("HabitatVisitStarted", { TargetUserId = pinfo.UserId })
 				else
@@ -1070,6 +1096,7 @@ local function wirePurchases()
 end
 
 local function buildUi()
+	detectLowEndMode()
 	rootGui = make("ScreenGui", {
 		Name = "CosmicCrittersUI",
 		ResetOnSpawn = false,
@@ -1106,6 +1133,10 @@ local function buildUi()
 	buildDailyPanel()
 	buildHabitatPanel()
 	wirePurchases()
+	if lowEndMode then
+		toast("Low-end mode: lighter effects enabled.", "warning")
+		track("LowEndModeEnabled")
+	end
 end
 
 DataReady.OnClientEvent:Connect(function(payload)

@@ -2,18 +2,18 @@
 
 ## Current classification
 
-The game is **strong soft-launch ready**, not polished full public-launch ready.
+The game is **nearly polished public-launch ready**, pending final content+QA signoff.
 
 ## Top blockers
 
-1. **In-world habitat instancing/teleport polish**: visit flow is implemented in UI/backend, but real in-world placement/streaming scenes still need final production implementation.
-2. **Avatar/art asset finalization**: premium UI structure is in place, but final iconography/illustration packs are still pending art team handoff.
-3. **Audio mastering pass**: centralized audio system exists, but IDs need final content approval and balanced loudness pass.
-4. **Live economy balancing**: telemetry hooks are in place; balancing requires real soft-launch data review and tuning iteration.
-5. **Cross-device QA signoff**: full low-end phone/tablet + unstable-network purchase/trade test matrix still required.
+1. **Final art pack swap**: replace placeholder-safe icon/frame assets with production-approved art export set via `AssetCatalog.lua`.
+2. **Final audio content/mastering**: replace placeholder SFX IDs and finalize loudness mix across devices.
+3. **Full QA signoff sweep**: complete cross-device, reconnect, and unstable-network regression matrix.
+4. **Live economy tuning round**: run telemetry-informed balancing pass on crystal costs, reward pacing, and progression friction.
+5. **Moderation/reporting UX completion**: integrate final report/review workflows for social surfaces before public scale.
 
 ## Minor known issues
 
-- Incoming trade invitations are represented via trade funnel state; dedicated inbound push popup channel can be added for richer live request UX.
-- Social visiting currently confirms target visit intent; final camera/teleport destination choreography should be added with level art.
-- Product card badges can be extended with live sale windows once live-ops config service is attached.
+- Inbound trade popup can be further enhanced with richer avatar portraits and multi-step trust confirmations.
+- Habitat visiting camera choreography can be upgraded with optional cinematic tween after teleport.
+- Product card sale windows can be wired to live-ops config for timed themes/events.

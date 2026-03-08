@@ -15,6 +15,7 @@ src/
     Config/
       GameConfig.lua
       RarityConfig.lua
+      AssetCatalog.lua
     Modules/
       RNG.lua
       CreatureCatalog.lua
@@ -161,3 +162,11 @@ Before publishing to a large audience, complete at least:
 - Premium presentation pass for cards, rarity color language, and hierarchy improvements in key panels.
 - Audio pass upgraded with centralized SFX + tiered rarity reveal audio mappings in `UIConfig.lua`.
 - Soft-launch telemetry hooks added for tutorial, first-time milestones, trade funnel, purchase funnel, and social interactions.
+
+## Phase 4 Pre-QA Polish Added
+
+- In-world `Workspace/Habitats` instancing now auto-creates player habitat pads with visit points and a showcase pedestal label.
+- Visiting flow now returns server-authoritative visit positions and client teleports to target habitat visit points.
+- Favorite creature updates now refresh the in-world showcase pedestal text.
+- Added `AssetCatalog.lua` for final art/audio replacement structure and swap guidance.
+- Added low-end mode detection and lighter client feedback behavior for low graphics quality devices.

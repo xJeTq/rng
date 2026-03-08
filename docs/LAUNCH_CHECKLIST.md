@@ -56,3 +56,11 @@
 - [x] Premium card hierarchy pass across quests/shop/trade/social panels.
 - [x] Centralized audio mapping with tier-based rarity reveal sounds and purchase/trade/daily cues.
 - [x] Soft-launch telemetry events for onboarding, first-time actions, trade/purchase funnels, and announcements.
+
+## I) Phase 4 pre-QA completed in code
+
+- [x] In-world habitat instancing with server-owned visit points.
+- [x] Visit flow teleports players to target habitat points in-session.
+- [x] Favorite creature showcase pedestal labels update from live profile data.
+- [x] Asset replacement structure added (`AssetCatalog.lua`) for final art/audio swaps.
+- [x] Low-end fallback mode added for reduced client feedback load.

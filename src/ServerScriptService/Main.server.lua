@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
+local Workspace = game:GetService("Workspace")
 
 local GameConfig = require(ReplicatedStorage.Config.GameConfig)
 local RNG = require(ReplicatedStorage.Modules.RNG)
@@ -18,6 +19,10 @@ local AntiExploitService = require(script.Services.AntiExploitService)
 local remotes = ReplicatedStorage:FindFirstChild("Remotes") or Instance.new("Folder")
 remotes.Name = "Remotes"
 remotes.Parent = ReplicatedStorage
+
+local habitatsFolder = Workspace:FindFirstChild("Habitats") or Instance.new("Folder")
+habitatsFolder.Name = "Habitats"
+habitatsFolder.Parent = Workspace
 
 local function ensureRemote(name, className)
 	local existing = remotes:FindFirstChild(name)
@@ -68,12 +73,10 @@ local function syncLeaderstats(player)
 	if not data then
 		return
 	end
-
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then
 		return
 	end
-
 	leaderstats.Stardust.Value = data.Currencies.Stardust
 	leaderstats.Discovered.Value = #data.Creatures
 end
@@ -92,7 +95,7 @@ end
 
 local function collectionProgress(data)
 	local total = 0
-	for _, _ in pairs(CreatureCatalog.Definitions) do
+	for _ in pairs(CreatureCatalog.Definitions) do
 		total += 1
 	end
 
@@ -102,12 +105,110 @@ local function collectionProgress(data)
 	end
 
 	local unlocked = 0
-	for _, _ in pairs(unique) do
+	for _ in pairs(unique) do
 		unlocked += 1
 	end
 
 	local percent = total > 0 and math.floor((unlocked / total) * 100) or 0
 	return unlocked, total, percent
+end
+
+local function getFavoriteCreatureName(data)
+	if not data.FavoriteCreatureId then
+		return "No Favorite"
+	end
+	for _, creature in ipairs(data.Creatures) do
+		if creature.Id == data.FavoriteCreatureId then
+			local def = CreatureCatalog.Definitions[creature.CatalogId]
+			return def and def.DisplayName or creature.CatalogId
+		end
+	end
+	return "No Favorite"
+end
+
+local function habitatOriginForUser(userId)
+	local index = (userId % 10000) + 1
+	local col = (index - 1) % 10
+	local row = math.floor((index - 1) / 10)
+	return Vector3.new(col * 160, 8, row * 160)
+end
+
+local function ensureHabitatModel(player)
+	local id = tostring(player.UserId)
+	local model = habitatsFolder:FindFirstChild(id)
+	if model then
+		return model
+	end
+
+	model = Instance.new("Model")
+	model.Name = id
+	model.Parent = habitatsFolder
+
+	local base = Instance.new("Part")
+	base.Name = "Base"
+	base.Size = Vector3.new(90, 2, 90)
+	base.Anchored = true
+	base.Material = Enum.Material.Neon
+	base.Color = Color3.fromRGB(66, 92, 166)
+	base.CFrame = CFrame.new(habitatOriginForUser(player.UserId))
+	base.Parent = model
+
+	local visitPoint = Instance.new("Part")
+	visitPoint.Name = "VisitPoint"
+	visitPoint.Size = Vector3.new(6, 1, 6)
+	visitPoint.Anchored = true
+	visitPoint.Material = Enum.Material.ForceField
+	visitPoint.Color = Color3.fromRGB(109, 231, 255)
+	visitPoint.CFrame = base.CFrame + Vector3.new(0, 2.5, 0)
+	visitPoint.Parent = model
+
+	local pedestal = Instance.new("Part")
+	pedestal.Name = "ShowcasePedestal"
+	pedestal.Size = Vector3.new(8, 4, 8)
+	pedestal.Anchored = true
+	pedestal.Material = Enum.Material.SmoothPlastic
+	pedestal.Color = Color3.fromRGB(255, 202, 115)
+	pedestal.CFrame = base.CFrame + Vector3.new(20, 3, 0)
+	pedestal.Parent = model
+
+	local board = Instance.new("BillboardGui")
+	board.Name = "ShowcaseLabel"
+	board.Size = UDim2.fromOffset(180, 60)
+	board.StudsOffset = Vector3.new(0, 5, 0)
+	board.AlwaysOnTop = true
+	board.Parent = pedestal
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Text"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundColor3 = Color3.fromRGB(31, 43, 76)
+	label.BackgroundTransparency = 0.15
+	label.BorderSizePixel = 0
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 16
+	label.TextColor3 = Color3.fromRGB(242, 246, 255)
+	label.Text = player.DisplayName .. "\nFavorite: No Favorite"
+	label.Parent = board
+
+	return model
+end
+
+local function updateShowcaseForPlayer(player)
+	local data = DataService.Get(player)
+	if not data then
+		return
+	end
+	local model = ensureHabitatModel(player)
+	local pedestal = model:FindFirstChild("ShowcasePedestal")
+	if not pedestal then
+		return
+	end
+	local board = pedestal:FindFirstChild("ShowcaseLabel")
+	local text = board and board:FindFirstChild("Text")
+	if not text then
+		return
+	end
+	text.Text = string.format("%s\nFavorite: %s", player.DisplayName, getFavoriteCreatureName(data))
 end
 
 local function grantCreature(player, data, rarity)
@@ -175,7 +276,6 @@ OpenCrystal.OnServerInvoke = function(player, crystalType)
 	if not CurrencyService.TrySpend(player, GameConfig.Currencies.Stardust, crystal.Cost) then
 		return { Ok = false, Error = "NotEnoughStardust" }
 	end
-
 	if not CurrencyService.TrySpend(player, GameConfig.Currencies.Energy, crystal.EnergyCost) then
 		CurrencyService.Add(player, GameConfig.Currencies.Stardust, crystal.Cost)
 		return { Ok = false, Error = "NotEnoughEnergy" }
@@ -213,7 +313,6 @@ ClaimDailyReward.OnServerInvoke = function(player)
 	if not AntiExploitService.WithinRateLimit(player, "ClaimDailyReward", 1) then
 		return { Ok = false, Error = "RateLimited" }
 	end
-
 	local data = DataService.Get(player)
 	if not data then
 		return { Ok = false, Error = "NoData" }
@@ -236,7 +335,6 @@ ClaimDailyReward.OnServerInvoke = function(player)
 	CurrencyService.Add(player, GameConfig.Currencies.Stardust, reward)
 	AnalyticsService.Track(player, "DailyRewardClaimed", { Streak = data.Daily.Streak, Reward = reward })
 	syncLeaderstats(player)
-
 	return { Ok = true, Reward = reward, Streak = data.Daily.Streak }
 end
 
@@ -281,13 +379,15 @@ GetCreatureInventory.OnServerInvoke = function(player)
 end
 
 GetSocialSnapshot.OnServerInvoke = function(player)
-	local players = {}
+	local result = {}
 	for _, p in ipairs(Players:GetPlayers()) do
 		if p ~= player then
 			local pdata = DataService.Get(p)
 			if pdata then
 				local unlocked, total, percent = collectionProgress(pdata)
-				table.insert(players, {
+				local habitat = ensureHabitatModel(p)
+				local visitPoint = habitat:FindFirstChild("VisitPoint")
+				table.insert(result, {
 					UserId = p.UserId,
 					Name = p.Name,
 					DisplayName = p.DisplayName,
@@ -297,19 +397,18 @@ GetSocialSnapshot.OnServerInvoke = function(player)
 					FavoriteCreatureId = pdata.FavoriteCreatureId,
 					CollectionUnlocked = unlocked,
 					CollectionTotal = total,
+					VisitPoint = visitPoint and { X = visitPoint.Position.X, Y = visitPoint.Position.Y, Z = visitPoint.Position.Z } or nil,
 				})
 			end
 		end
 	end
-
-	return { Ok = true, Players = players }
+	return { Ok = true, Players = result }
 end
 
 SetFavoriteCreature.OnServerInvoke = function(player, creatureInstanceId)
 	if typeof(creatureInstanceId) ~= "string" then
 		return { Ok = false, Error = "BadRequest" }
 	end
-
 	local data = DataService.Get(player)
 	if not data then
 		return { Ok = false, Error = "NoData" }
@@ -318,6 +417,7 @@ SetFavoriteCreature.OnServerInvoke = function(player, creatureInstanceId)
 	for _, creature in ipairs(data.Creatures) do
 		if creature.Id == creatureInstanceId then
 			data.FavoriteCreatureId = creatureInstanceId
+			updateShowcaseForPlayer(player)
 			AnalyticsService.Track(player, "FavoriteSet", { CreatureId = creatureInstanceId })
 			return { Ok = true }
 		end
@@ -334,14 +434,18 @@ VisitHabitat.OnServerInvoke = function(player, targetUserId)
 	if not target then
 		return { Ok = false, Error = "TargetOffline" }
 	end
+
+	local habitat = ensureHabitatModel(target)
+	local visitPoint = habitat:FindFirstChild("VisitPoint")
+	if not visitPoint then
+		return { Ok = false, Error = "NoVisitPoint" }
+	end
+
 	AnalyticsService.Track(player, "HabitatVisitRequested", { TargetUserId = targetUserId })
 	return {
 		Ok = true,
-		Target = {
-			UserId = target.UserId,
-			Name = target.Name,
-			DisplayName = target.DisplayName,
-		},
+		Target = { UserId = target.UserId, Name = target.Name, DisplayName = target.DisplayName },
+		VisitPoint = { X = visitPoint.Position.X, Y = visitPoint.Position.Y + 4, Z = visitPoint.Position.Z },
 	}
 end
 
@@ -363,7 +467,6 @@ CreateTrade.OnServerInvoke = function(player, targetUserId, offeredCreatureIds)
 	if typeof(targetUserId) ~= "number" or typeof(offeredCreatureIds) ~= "table" then
 		return { Ok = false, Error = "BadRequest" }
 	end
-
 	if #offeredCreatureIds > GameConfig.Limits.MaxTradeSlots then
 		return { Ok = false, Error = "TooManyTradeItems" }
 	end
@@ -422,6 +525,8 @@ Players.PlayerAdded:Connect(function(player)
 	local data = DataService.Load(player)
 	ensureQuestState(data)
 	createLeaderstats(player, data)
+	ensureHabitatModel(player)
+	updateShowcaseForPlayer(player)
 
 	local unlocked, total, percent = collectionProgress(data)
 	AnalyticsService.Track(player, "SessionStart", {
@@ -444,6 +549,11 @@ Players.PlayerRemoving:Connect(function(player)
 	AnalyticsService.Track(player, "SessionEnd")
 	DataService.Save(player)
 	DataService.Remove(player)
+
+	local habitat = habitatsFolder:FindFirstChild(tostring(player.UserId))
+	if habitat then
+		habitat:Destroy()
+	end
 end)
 
 game:BindToClose(function()
