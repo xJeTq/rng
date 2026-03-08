@@ -140,3 +140,11 @@ Before publishing to a large audience, complete at least:
 - Content ops tooling for weekly events / limited creatures / live balancing toggles
 - End-to-end platform QA: console/tablet coverage, reconnect/latency tests, purchase rollback tests
 - Safety systems: robust player report flow, moderation queues, abuse review tooling
+
+## Phase 2 UX Polish Added
+
+- Fully rebuilt player-facing UI shell in `Main.client.lua` with mobile-first HUD, tabbed panels, and non-overlapping modal state handling.
+- Added improved onboarding/tutorial flow with objective prompts, completion reward, and return-player auto-skip behavior.
+- Added polished player feedback loops: reveal overlays, toasts, rare celebration shake, and purchase feedback hooks.
+- Added shop and trade UX presentation layers on top of hardened backend remotes.
+- Added launch planning docs in `docs/` for checklist, known blockers, and manual QA pass.
